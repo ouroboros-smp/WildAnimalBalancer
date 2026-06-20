@@ -1,0 +1,9 @@
+{
+  "name": "wab-e2e",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Mineflayer E2E spawn check for WildAnimalBalancer",
+  "dependencies": {
+    "mineflayer": "^4.0.0"
+  }
+}

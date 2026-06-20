@@ -1,0 +1,43 @@
+# WildAnimalBalancer config.
+# Edit anything here and run /wildlife reload to apply it without restarting.
+
+# How often (in seconds) each player's surroundings are checked and topped up.
+cycle-seconds: 30
+
+# Blocks around a player to census wild animals and to spawn within.
+scan-radius: 96
+
+# Wild animals wanted in an area with a single player.
+base-target: 8
+
+# Extra wanted per additional player sharing that area.
+per-additional-player: 4
+
+# Hard ceiling per area no matter how many players are present.
+max-target: 40
+
+# Most animals spawned per area per cycle. Keeps top-ups gradual instead of bursty.
+# If complaints persist, raise THIS before you raise the targets.
+max-per-cycle: 6
+
+# Never spawn closer than this many blocks to the player.
+min-spawn-distance: 24
+
+# Location attempts per animal before giving up on finding a spot.
+spawn-tries: 20
+
+# Minimum sky light at the spawn block. Keeps spawns out of caves and deep shade.
+min-sky-light: 7
+
+# Animals the balancer will spawn. Use Bukkit EntityType names.
+animals:
+  - COW
+  - PIG
+  - SHEEP
+  - CHICKEN
+
+# Worlds where the balancer runs. Leave empty (the default) to run in every world.
+# To restrict it, list world names, e.g.:
+# enabled-worlds:
+#   - world
+enabled-worlds: []

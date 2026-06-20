@@ -1,0 +1,14 @@
+name: WildAnimalBalancer
+version: 1.0.0
+main: com.ouroboros.wildlife.WildlifePlugin
+api-version: '1.21'
+folia-supported: true
+author: Ronald Johnson
+commands:
+  wildlife:
+    description: WildAnimalBalancer admin commands
+    usage: /wildlife reload
+permissions:
+  wildlife.admin:
+    description: Manage WildAnimalBalancer
+    default: op

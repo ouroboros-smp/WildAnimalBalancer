@@ -1,0 +1,17 @@
+# Plugin config used only by the E2E job: short cycle and tighter radius so animals
+# appear quickly and close to the test bot on a superflat world.
+cycle-seconds: 5
+scan-radius: 48
+base-target: 8
+per-additional-player: 4
+max-target: 40
+max-per-cycle: 6
+min-spawn-distance: 8
+spawn-tries: 24
+min-sky-light: 7
+animals:
+  - COW
+  - PIG
+  - SHEEP
+  - CHICKEN
+enabled-worlds: []
