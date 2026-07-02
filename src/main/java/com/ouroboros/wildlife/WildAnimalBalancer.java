@@ -67,6 +67,8 @@ public final class WildAnimalBalancer {
             boolean persistentSpawns,
             List<EntityType> animals,
             Map<String, List<EntityType>> biomeAnimals,
+            boolean vanillaBiomeDefaults,
+            Map<String, List<EntityType>> vanillaBiomeAnimals,
             Set<String> enabledWorlds
     ) {}
 
@@ -157,13 +159,26 @@ public final class WildAnimalBalancer {
     }
 
     /**
-     * Species pool for a biome: the biome-animals override when one is configured
-     * (an empty override disables the biome), otherwise the global animals list.
-     * Biome keys are lowercase key paths, e.g. "snowy_plains".
+     * Species pool for a biome. Precedence, biome keys lowercase (e.g. "snowy_plains"):
+     *   1. An explicit biome-animals override (an empty override disables the biome).
+     *   2. The vanilla filter: the global animals list narrowed to what vanilla
+     *      naturally spawns in that biome. A filter, never an expansion; species
+     *      the admin did not configure are never introduced. Biomes missing from
+     *      the bundled data (custom datapack biomes) are not filtered at all.
+     *   3. The global animals list.
      */
     static List<EntityType> poolFor(Settings cfg, String biomeKey) {
-        List<EntityType> pool = cfg.biomeAnimals().get(biomeKey);
-        return pool != null ? pool : cfg.animals();
+        List<EntityType> override = cfg.biomeAnimals().get(biomeKey);
+        if (override != null) return override;
+        if (cfg.vanillaBiomeDefaults()) {
+            List<EntityType> vanilla = cfg.vanillaBiomeAnimals().get(biomeKey);
+            if (vanilla != null) {
+                List<EntityType> pool = new ArrayList<>(cfg.animals());
+                pool.retainAll(vanilla);
+                return pool;
+            }
+        }
+        return cfg.animals();
     }
 
     /**

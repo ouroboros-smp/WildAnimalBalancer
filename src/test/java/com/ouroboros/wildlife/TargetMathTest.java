@@ -19,7 +19,16 @@ class TargetMathTest {
         return new WildAnimalBalancer.Settings(
                 30L, 96, base, perPlayer, max, maxPerCycle, 24, 20, 7,
                 3, 30, true,
-                List.of(EntityType.COW), Map.of(), Set.of());
+                List.of(EntityType.COW), Map.of(), true, Map.of(), Set.of());
+    }
+
+    private static WildAnimalBalancer.Settings pools(List<EntityType> animals,
+                                                     Map<String, List<EntityType>> overrides,
+                                                     boolean vanillaDefaults,
+                                                     Map<String, List<EntityType>> vanilla) {
+        return new WildAnimalBalancer.Settings(
+                30L, 96, 8, 4, 40, 6, 24, 20, 7, 3, 30, true,
+                animals, overrides, vanillaDefaults, vanilla, Set.of());
     }
 
     @Test
@@ -85,13 +94,40 @@ class TargetMathTest {
 
     @Test
     void biomeOverridesReplaceThePoolOnlyWhereMapped() {
-        WildAnimalBalancer.Settings c = new WildAnimalBalancer.Settings(
-                30L, 96, 8, 4, 40, 6, 24, 20, 7, 3, 30, true,
+        WildAnimalBalancer.Settings c = pools(
                 List.of(EntityType.COW),
                 Map.of("snowy_plains", List.of(EntityType.SHEEP), "desert", List.of()),
-                Set.of());
+                false, Map.of());
         assertEquals(List.of(EntityType.SHEEP), WildAnimalBalancer.poolFor(c, "snowy_plains"));
         assertEquals(List.of(), WildAnimalBalancer.poolFor(c, "desert"));
         assertEquals(List.of(EntityType.COW), WildAnimalBalancer.poolFor(c, "plains"));
+    }
+
+    @Test
+    void vanillaDefaultsFilterThePoolButNeverExpandIt() {
+        WildAnimalBalancer.Settings c = pools(
+                List.of(EntityType.COW, EntityType.PIG, EntityType.CHICKEN),
+                Map.of(), true,
+                Map.of("taiga", List.of(EntityType.COW, EntityType.CHICKEN, EntityType.FOX),
+                       "snowy_plains", List.of(EntityType.RABBIT)));
+        // narrowed to the intersection, keeping the animals-list order; FOX is not added
+        assertEquals(List.of(EntityType.COW, EntityType.CHICKEN), WildAnimalBalancer.poolFor(c, "taiga"));
+        // no configured species spawns there in vanilla: biome yields nothing
+        assertEquals(List.of(), WildAnimalBalancer.poolFor(c, "snowy_plains"));
+        // biome unknown to the snapshot (custom or datapack): unfiltered
+        assertEquals(c.animals(), WildAnimalBalancer.poolFor(c, "terra:alpine_meadow"));
+    }
+
+    @Test
+    void explicitOverrideBeatsVanillaAndFlagOffDisablesFiltering() {
+        Map<String, List<EntityType>> vanilla = Map.of("snowy_plains", List.of(EntityType.RABBIT));
+        WildAnimalBalancer.Settings overridden = pools(
+                List.of(EntityType.COW),
+                Map.of("snowy_plains", List.of(EntityType.SHEEP)),
+                true, vanilla);
+        assertEquals(List.of(EntityType.SHEEP), WildAnimalBalancer.poolFor(overridden, "snowy_plains"));
+
+        WildAnimalBalancer.Settings flagOff = pools(List.of(EntityType.COW), Map.of(), false, vanilla);
+        assertEquals(List.of(EntityType.COW), WildAnimalBalancer.poolFor(flagOff, "snowy_plains"));
     }
 }

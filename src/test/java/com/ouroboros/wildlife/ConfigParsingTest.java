@@ -10,8 +10,10 @@ import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -32,7 +34,7 @@ class ConfigParsingTest {
     @Test
     void bundledConfigParsesToDocumentedDefaults() throws Exception {
         List<String> warnings = new ArrayList<>();
-        WildAnimalBalancer.Settings s = WildlifePlugin.parseSettings(bundledConfig(), warnings::add);
+        WildAnimalBalancer.Settings s = WildlifePlugin.parseSettings(bundledConfig(), Map.of(), warnings::add);
 
         assertEquals(30L, s.cycleSeconds());
         assertEquals(96, s.scanRadius());
@@ -46,6 +48,7 @@ class ConfigParsingTest {
         assertEquals(3, s.deficitCycles());
         assertEquals(30, s.cellHourlyBudget());
         assertTrue(s.persistentSpawns());
+        assertTrue(s.vanillaBiomeDefaults());
         assertEquals(4, s.animals().size()); // COW, PIG, SHEEP, CHICKEN
         assertTrue(s.biomeAnimals().isEmpty());
         assertTrue(s.enabledWorlds().isEmpty());
@@ -58,7 +61,7 @@ class ConfigParsingTest {
         c.set("animals", List.of("COW", "NOT_A_REAL_MOB"));
 
         List<String> warnings = new ArrayList<>();
-        WildAnimalBalancer.Settings s = WildlifePlugin.parseSettings(c, warnings::add);
+        WildAnimalBalancer.Settings s = WildlifePlugin.parseSettings(c, Map.of(), warnings::add);
 
         assertEquals(1, s.animals().size());
         assertEquals(List.of("NOT_A_REAL_MOB"), warnings);
@@ -71,11 +74,32 @@ class ConfigParsingTest {
         c.set("biome-animals.desert", List.of());
 
         List<String> warnings = new ArrayList<>();
-        WildAnimalBalancer.Settings s = WildlifePlugin.parseSettings(c, warnings::add);
+        WildAnimalBalancer.Settings s = WildlifePlugin.parseSettings(c, Map.of(), warnings::add);
 
         // keys are normalised to lowercase biome key paths
         assertEquals(List.of(EntityType.SHEEP), s.biomeAnimals().get("snowy_plains"));
         assertTrue(s.biomeAnimals().get("desert").isEmpty(), "empty override disables the biome");
         assertEquals(List.of("NOT_A_REAL_MOB"), warnings);
+    }
+
+    @Test
+    void bundledVanillaBiomeSnapshotParsesCleanly() throws Exception {
+        List<String> warnings = new ArrayList<>();
+        Map<String, List<EntityType>> vanilla;
+        try (InputStream in = getClass().getResourceAsStream("/" + WildlifePlugin.VANILLA_BIOME_RESOURCE)) {
+            assertNotNull(in, "vanilla-biome-animals.yml should be bundled with the jar");
+            vanilla = WildlifePlugin.loadBiomeResource(in, warnings::add);
+        }
+
+        assertTrue(warnings.isEmpty(), "bundled snapshot should contain only valid EntityType names: " + warnings);
+        // spot checks against known vanilla behaviour
+        assertTrue(vanilla.get("plains").contains(EntityType.COW));
+        assertFalse(vanilla.get("snowy_plains").contains(EntityType.PIG), "no pigs on snowy plains");
+        assertEquals(List.of(EntityType.MOOSHROOM), vanilla.get("mushroom_fields"));
+        assertTrue(vanilla.get("pale_garden").isEmpty(), "pale garden is intentionally lifeless");
+        // the filter must not wipe out the shipped default species in common biomes
+        WildAnimalBalancer.Settings s = WildlifePlugin.parseSettings(bundledConfig(), vanilla, warnings::add);
+        assertEquals(s.animals(), WildAnimalBalancer.poolFor(s, "plains"),
+                "all four default species should survive the plains filter");
     }
 }

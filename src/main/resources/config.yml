@@ -51,9 +51,17 @@ animals:
   - SHEEP
   - CHICKEN
 
+# Keep spawns biome-appropriate using a bundled snapshot of vanilla spawn data:
+# the animals list above is narrowed per biome to what vanilla naturally spawns
+# there (so no pigs on snowy plains). It only ever filters, it never adds
+# species you did not list. Biomes unknown to the snapshot (custom or datapack
+# biomes) are not filtered. Set false to spawn the full list everywhere.
+vanilla-biome-defaults: true
+
 # Optional per-biome species overrides. Keys are biome ids (the key path, e.g.
-# snowy_plains), values replace the animals list in that biome. An empty list
-# disables balancer spawns in that biome entirely.
+# snowy_plains), values replace the animals list in that biome, ignoring the
+# vanilla filter above. An empty list disables balancer spawns in that biome
+# entirely.
 # biome-animals:
 #   snowy_plains:
 #     - SHEEP

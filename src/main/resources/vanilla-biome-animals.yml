@@ -1,0 +1,60 @@
+# Snapshot of vanilla Minecraft (Java 1.21.x) passive land animal spawns per
+# overworld biome, compiled from minecraft.wiki mob Spawning sections and
+# cross-checked against biome pages. Bundled in the jar; not user-editable.
+#
+# Used when vanilla-biome-defaults is true in config.yml: the configured
+# animals list is narrowed to the intersection with the biome's list here, so
+# spawns stay biome-appropriate. It only ever filters; species not in the
+# admin's animals list are never spawned. Biomes missing from this file
+# (custom or datapack biomes) are not filtered. To override a biome, use
+# biome-animals in config.yml, which takes precedence over this data.
+#
+# Java-edition lists only. Notable Java-vs-Bedrock differences applied here:
+# llamas do not spawn in plain savanna or windswept_savanna on Java, ocelots
+# spawn only in jungle, parrots only in jungle and bamboo_jungle, polar bears
+# only in snowy_plains and ice_spikes (land biomes). Wolf entries include the
+# 1.20.5+ variant ranges. If a future MC version changes spawn lists, update
+# this file.
+
+plains: [COW, PIG, SHEEP, CHICKEN, HORSE, DONKEY]
+sunflower_plains: [COW, PIG, SHEEP, CHICKEN, HORSE, DONKEY]
+snowy_plains: [RABBIT, POLAR_BEAR]
+ice_spikes: [RABBIT, POLAR_BEAR]
+forest: [COW, PIG, SHEEP, CHICKEN, WOLF]
+flower_forest: [COW, PIG, SHEEP, CHICKEN, RABBIT]
+birch_forest: [COW, PIG, SHEEP, CHICKEN]
+old_growth_birch_forest: [COW, PIG, SHEEP, CHICKEN]
+dark_forest: [COW, PIG, SHEEP, CHICKEN]
+taiga: [COW, PIG, SHEEP, CHICKEN, FOX, WOLF, RABBIT]
+old_growth_pine_taiga: [COW, PIG, SHEEP, CHICKEN, FOX, WOLF, RABBIT]
+old_growth_spruce_taiga: [COW, PIG, SHEEP, CHICKEN, FOX, WOLF, RABBIT]
+snowy_taiga: [COW, PIG, SHEEP, CHICKEN, FOX, WOLF, RABBIT]
+savanna: [COW, PIG, SHEEP, CHICKEN, HORSE, DONKEY, ARMADILLO]
+savanna_plateau: [COW, PIG, SHEEP, CHICKEN, HORSE, DONKEY, LLAMA, ARMADILLO, WOLF]
+windswept_savanna: [COW, PIG, SHEEP, CHICKEN, HORSE, DONKEY, ARMADILLO]
+windswept_hills: [COW, PIG, SHEEP, CHICKEN, LLAMA]
+windswept_gravelly_hills: [COW, PIG, SHEEP, CHICKEN, LLAMA]
+windswept_forest: [COW, PIG, SHEEP, CHICKEN, LLAMA]
+jungle: [COW, PIG, SHEEP, CHICKEN, PANDA, OCELOT, PARROT]
+sparse_jungle: [COW, PIG, SHEEP, CHICKEN, WOLF]
+bamboo_jungle: [COW, PIG, SHEEP, CHICKEN, PANDA, PARROT]
+swamp: [COW, PIG, SHEEP, CHICKEN, FROG]
+mangrove_swamp: [FROG]
+meadow: [SHEEP, DONKEY, RABBIT]
+cherry_grove: [PIG, SHEEP, RABBIT]
+grove: [RABBIT, FOX, WOLF]
+snowy_slopes: [RABBIT, GOAT]
+jagged_peaks: [GOAT]
+frozen_peaks: [GOAT]
+stony_peaks: []
+mushroom_fields: [MOOSHROOM]
+desert: [RABBIT]
+beach: [TURTLE]
+snowy_beach: []
+stony_shore: []
+river: []
+frozen_river: []
+badlands: [COW, PIG, SHEEP, CHICKEN, ARMADILLO]
+eroded_badlands: [COW, PIG, SHEEP, CHICKEN, ARMADILLO]
+wooded_badlands: [COW, PIG, SHEEP, CHICKEN, ARMADILLO, WOLF]
+pale_garden: []
