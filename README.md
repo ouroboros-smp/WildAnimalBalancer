@@ -33,6 +33,7 @@ Animals show up where people are playing, scaled to how busy the area is. Empty 
 - Farm proof. A shortage must persist for several cycles before a top up, and every area has an hourly spawn budget. Standing in a field and killing everything on repeat stops paying out, so breeding stays the efficient path to bulk food.
 - Herds, not scatter. Each top up spawns one species as a small group around a single spot, like worldgen herds.
 - Persistent. Spawned animals do not despawn when players leave, so top ups genuinely repopulate the area.
+- Biome aware. A bundled snapshot of vanilla spawn data narrows the species list per biome, so no pigs on snowy plains and only mooshrooms on mushroom fields. It only ever filters; species you did not configure are never added. Overridable per biome, or disable it entirely.
 - Configurable. Species list, targets, radius, per biome species overrides, and a per world allowlist, all in `config.yml`.
 - Live reload. Retune with a command, no restart.
 
@@ -80,7 +81,8 @@ All settings live in `config.yml`. Edit, then run `/wildlife reload` to apply wi
 | `spawn-tries` | 20 | Location attempts per animal before giving up on a spot. |
 | `min-sky-light` | 7 | Minimum sky light at the spawn block. Keeps spawns out of caves and shade. |
 | `animals` | COW, PIG, SHEEP, CHICKEN | Species to spawn. Uses Bukkit EntityType names. |
-| `biome-animals` | (empty) | Per biome species overrides. An empty list for a biome disables it. |
+| `vanilla-biome-defaults` | true | Narrow the species list per biome to what vanilla spawns there, using a bundled snapshot of vanilla Java 1.21 spawn data. Filter only, never adds species. Unknown (custom or datapack) biomes are not filtered. |
+| `biome-animals` | (empty) | Per biome species overrides. Beats the vanilla filter. An empty list for a biome disables it. |
 | `enabled-worlds` | (empty) | Worlds to run in. Empty means every world. |
 
 The target for an area is `base-target + per-additional-player * (extra players)`, capped at `max-target`.
