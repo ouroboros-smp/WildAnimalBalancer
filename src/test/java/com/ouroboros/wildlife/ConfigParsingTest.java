@@ -64,7 +64,34 @@ class ConfigParsingTest {
         WildAnimalBalancer.Settings s = WildlifePlugin.parseSettings(c, Map.of(), warnings::add);
 
         assertEquals(1, s.animals().size());
-        assertEquals(List.of("NOT_A_REAL_MOB"), warnings);
+        assertEquals(List.of("Unknown animal type in config, skipping: NOT_A_REAL_MOB"), warnings);
+    }
+
+    @Test
+    void cycleSecondsBelowOneIsClampedWithWarning() {
+        YamlConfiguration c = new YamlConfiguration();
+        c.set("cycle-seconds", 0);
+
+        List<String> warnings = new ArrayList<>();
+        WildAnimalBalancer.Settings s = WildlifePlugin.parseSettings(c, Map.of(), warnings::add);
+
+        assertEquals(1L, s.cycleSeconds(), "Settings must report the true effective value");
+        assertEquals(1, warnings.size());
+        assertTrue(warnings.get(0).contains("cycle-seconds"), warnings.toString());
+    }
+
+    @Test
+    void minSpawnDistanceBeyondScanRadiusIsClampedWithWarning() {
+        YamlConfiguration c = new YamlConfiguration();
+        c.set("scan-radius", 96);
+        c.set("min-spawn-distance", 200);
+
+        List<String> warnings = new ArrayList<>();
+        WildAnimalBalancer.Settings s = WildlifePlugin.parseSettings(c, Map.of(), warnings::add);
+
+        assertEquals(96, s.minSpawnDist(), "spawn ring must stay inside the census box");
+        assertEquals(1, warnings.size());
+        assertTrue(warnings.get(0).contains("min-spawn-distance"), warnings.toString());
     }
 
     @Test
@@ -79,7 +106,7 @@ class ConfigParsingTest {
         // keys are normalised to lowercase biome key paths
         assertEquals(List.of(EntityType.SHEEP), s.biomeAnimals().get("snowy_plains"));
         assertTrue(s.biomeAnimals().get("desert").isEmpty(), "empty override disables the biome");
-        assertEquals(List.of("NOT_A_REAL_MOB"), warnings);
+        assertEquals(List.of("Unknown animal type in config, skipping: NOT_A_REAL_MOB"), warnings);
     }
 
     @Test

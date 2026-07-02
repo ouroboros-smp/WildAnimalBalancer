@@ -52,7 +52,7 @@ public final class WildlifePlugin extends JavaPlugin {
     }
 
     private WildAnimalBalancer.Settings loadSettings() {
-        Consumer<String> warn = name -> getLogger().warning("Unknown animal type in config, skipping: " + name);
+        Consumer<String> warn = msg -> getLogger().warning(msg);
         Map<String, List<EntityType>> vanilla;
         try (InputStream in = getResource(VANILLA_BIOME_RESOURCE)) {
             vanilla = loadBiomeResource(in, warn);
@@ -67,19 +67,25 @@ public final class WildlifePlugin extends JavaPlugin {
     static final String VANILLA_BIOME_RESOURCE = "vanilla-biome-animals.yml";
 
     /**
-     * Build Settings from a configuration. Pure aside from the warning callback,
-     * so it can be unit tested against the bundled config.yml without a live server.
+     * Build Settings from a configuration. Pure aside from the warning callback
+     * (which receives complete, operator-facing messages), so it can be unit
+     * tested against the bundled config.yml without a live server.
      * vanillaBiomeAnimals is the parsed bundled snapshot (see loadBiomeResource).
+     *
+     * Misconfigurations are clamped HERE, with a warning, so Settings always
+     * reports the true effective values: cycle-seconds below 1 becomes 1, and
+     * min-spawn-distance is capped at scan-radius (a spawn ring outside the
+     * census box would never be counted and would respawn every eligible cycle).
      */
     static WildAnimalBalancer.Settings parseSettings(FileConfiguration c,
                                                      Map<String, List<EntityType>> vanillaBiomeAnimals,
-                                                     Consumer<String> onUnknownAnimal) {
+                                                     Consumer<String> warn) {
         List<EntityType> animals = new ArrayList<>();
         for (String name : c.getStringList("animals")) {
             try {
                 animals.add(EntityType.valueOf(name.toUpperCase(Locale.ROOT)));
             } catch (IllegalArgumentException ex) {
-                onUnknownAnimal.accept(name);
+                warn.accept("Unknown animal type in config, skipping: " + name);
             }
         }
         if (animals.isEmpty()) {
@@ -92,18 +98,32 @@ public final class WildlifePlugin extends JavaPlugin {
         // Per-biome overrides: keys normalised to lowercase biome key paths, values
         // replace the global list in that biome. An empty list disables the biome.
         Map<String, List<EntityType>> biomeAnimals =
-                parseBiomeMap(c.getConfigurationSection("biome-animals"), onUnknownAnimal);
+                parseBiomeMap(c.getConfigurationSection("biome-animals"), warn);
 
         Set<String> worlds = new HashSet<>(c.getStringList("enabled-worlds"));
 
+        long cycleSeconds = c.getLong("cycle-seconds", 30);
+        if (cycleSeconds < 1) {
+            warn.accept("cycle-seconds " + cycleSeconds + " is below 1, clamping to 1");
+            cycleSeconds = 1;
+        }
+
+        int scanRadius = c.getInt("scan-radius", 96);
+        int minSpawnDist = c.getInt("min-spawn-distance", 24);
+        if (minSpawnDist > scanRadius) {
+            warn.accept("min-spawn-distance " + minSpawnDist + " exceeds scan-radius " + scanRadius
+                    + ", clamping to " + scanRadius);
+            minSpawnDist = scanRadius;
+        }
+
         return new WildAnimalBalancer.Settings(
-                c.getLong("cycle-seconds", 30),
-                c.getInt("scan-radius", 96),
+                cycleSeconds,
+                scanRadius,
                 c.getInt("base-target", 8),
                 c.getInt("per-additional-player", 4),
                 c.getInt("max-target", 40),
                 c.getInt("max-per-cycle", 6),
-                c.getInt("min-spawn-distance", 24),
+                minSpawnDist,
                 c.getInt("spawn-tries", 20),
                 c.getInt("min-sky-light", 7),
                 c.getInt("deficit-cycles", 3),
@@ -123,7 +143,7 @@ public final class WildlifePlugin extends JavaPlugin {
      * yields an empty map. Shared by the config's biome-animals section and the
      * bundled vanilla snapshot.
      */
-    static Map<String, List<EntityType>> parseBiomeMap(ConfigurationSection section, Consumer<String> onUnknownAnimal) {
+    static Map<String, List<EntityType>> parseBiomeMap(ConfigurationSection section, Consumer<String> warn) {
         Map<String, List<EntityType>> map = new HashMap<>();
         if (section == null) return map;
         for (String biome : section.getKeys(false)) {
@@ -132,7 +152,7 @@ public final class WildlifePlugin extends JavaPlugin {
                 try {
                     list.add(EntityType.valueOf(name.toUpperCase(Locale.ROOT)));
                 } catch (IllegalArgumentException ex) {
-                    onUnknownAnimal.accept(name);
+                    warn.accept("Unknown animal type in config, skipping: " + name);
                 }
             }
             map.put(biome.toLowerCase(Locale.ROOT), list);
@@ -141,11 +161,11 @@ public final class WildlifePlugin extends JavaPlugin {
     }
 
     /** Parse the bundled vanilla biome snapshot from a resource stream. */
-    static Map<String, List<EntityType>> loadBiomeResource(InputStream in, Consumer<String> onUnknownAnimal) {
+    static Map<String, List<EntityType>> loadBiomeResource(InputStream in, Consumer<String> warn) {
         if (in == null) return Map.of();
         YamlConfiguration yaml = YamlConfiguration.loadConfiguration(
                 new InputStreamReader(in, StandardCharsets.UTF_8));
-        return parseBiomeMap(yaml, onUnknownAnimal);
+        return parseBiomeMap(yaml, warn);
     }
 
     @Override

@@ -21,6 +21,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Random;
 import java.util.Set;
+import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -37,8 +38,12 @@ import java.util.logging.Level;
  *   - Every entity/world read and the spawn itself runs on the OWNING region
  *     thread. We get there via each player's EntityScheduler, never the global
  *     scheduler. Enumerating entities off the owning thread is a hard error.
- *   - Entities and chunks owned by a neighbouring region are detected with
- *     Bukkit.isOwnedByCurrentRegion and skipped, never forced.
+ *   - Folia demands the current region own EVERY chunk a getNearbyEntities box
+ *     touches, and it logs at ERROR before throwing, so a catch cannot keep the
+ *     log clean. The census therefore pre-checks ownership of the whole scan box
+ *     (Bukkit.isOwnedByCurrentRegion with a covering chunk radius) and skips the
+ *     player's census for the cycle when the box crosses a region boundary:
+ *     skipped, never forced. Spawn-spot chunks are re-checked individually.
  *   - The async driver does no world access at all. It only walks the player
  *     list and dispatches per-player tasks.
  *
@@ -89,6 +94,7 @@ public final class WildAnimalBalancer {
     // budgets: spawns already spent in the cell's current hourly window.
     private final ConcurrentHashMap<String, CellBudget> budgets = new ConcurrentHashMap<>();
     private final AtomicInteger cycle = new AtomicInteger();
+    private final AtomicInteger lastWarnedCycle = new AtomicInteger(-1);
     private ScheduledTask driver;
 
     private record CellStreak(int cycle, int streak) {}
@@ -112,7 +118,7 @@ public final class WildAnimalBalancer {
                 // 3rd arg (retired callback) is null: if the player logs off first, just skip.
                 p.getScheduler().run(plugin, task -> census(p, c), null);
             }
-        }, Math.max(1, cfg.cycleSeconds()), Math.max(1, cfg.cycleSeconds()), TimeUnit.SECONDS);
+        }, cfg.cycleSeconds(), cfg.cycleSeconds(), TimeUnit.SECONDS); // parseSettings clamps to >= 1
     }
 
     public void stop() {
@@ -182,17 +188,18 @@ public final class WildAnimalBalancer {
     }
 
     /**
-     * Runs on the player's owning region thread. Backstop wrapper: nothing thrown
-     * here may escape to the region scheduler, where Folia would log it as an
-     * off-region access error. Ownership is checked before every read below, so
-     * this catch should never fire; it exists so a missed case degrades to a
-     * skipped cycle instead of a scary log line.
+     * Runs on the player's owning region thread. Backstop wrapper only: ownership
+     * is pre-checked in runCensus, so this should never fire. If it does, a real
+     * bug is being skipped; log it visibly (WARNING, at most once per cycle so a
+     * repeating fault cannot flood the log). Errors (OOM and friends) propagate.
      */
     private void census(Player player, int currentCycle) {
         try {
             runCensus(player, currentCycle);
-        } catch (Throwable t) {
-            plugin.getLogger().log(Level.FINE, "census skipped for " + player.getName(), t);
+        } catch (Exception e) {
+            if (lastWarnedCycle.getAndSet(currentCycle) != currentCycle) {
+                plugin.getLogger().log(Level.WARNING, "census failed for " + player.getName(), e);
+            }
         }
     }
 
@@ -203,19 +210,28 @@ public final class WildAnimalBalancer {
         if (world == null) return;
         if (!cfg.enabledWorlds().isEmpty() && !cfg.enabledWorlds().contains(world.getName())) return;
 
+        // Folia requires the current region to own EVERY chunk the census box
+        // touches, and its thread check logs at ERROR before throwing, so this
+        // cannot be handled after the fact. Pre-check the whole box and skip the
+        // player's census this cycle at a boundary: skipped, never forced. This
+        // runs BEFORE the cell claim so a skipped player neither blocks the cell
+        // for co-located players nor resets the deficit streak. On Paper the
+        // check is always true on the main thread.
+        if (!Bukkit.isOwnedByCurrentRegion(at, scanChunkRadius(cfg.scanRadius()))) return;
+
         // Dedupe: first player to claim this ~128-block cell this cycle proceeds, others bail.
         // Keyed per world so same-coordinate players in different worlds never collide.
         // ConcurrentHashMap.put returns the previous value atomically, so exactly one wins.
-        String cell = cellKey(world, at);
+        String cell = cellKey(world.getUID(), at.getBlockX(), at.getBlockZ());
         Integer was = handled.put(cell, currentCycle);
         if (was != null && was == currentCycle) return;
 
         int wild = 0;
         int localPlayers = 1; // the anchor player (getNearbyEntities does not include self)
         int r = cfg.scanRadius();
+        // The box ownership pre-check above guarantees every entity returned here
+        // is owned by this region; no per-entity ownership filtering is needed.
         for (Entity e : player.getNearbyEntities(r, r, r)) {
-            // Boundary entity owned by a neighbouring region: skip, never force.
-            if (!Bukkit.isOwnedByCurrentRegion(e)) continue;
             if (e instanceof Player) { localPlayers++; continue; }
             if (isWildAnimal(e)) wild++;
         }
@@ -244,8 +260,20 @@ public final class WildAnimalBalancer {
         if (spawned > 0) budgets.put(cell, new CellBudget(budget.windowStart(), budget.spawned() + spawned));
     }
 
-    private static String cellKey(World world, Location at) {
-        return world.getUID() + ":" + (at.getBlockX() >> 7) + ":" + (at.getBlockZ() >> 7);
+    /**
+     * Per-world ~128-block cell key for the dedupe and guardrail maps. Static and
+     * world-id based so the world scoping is unit testable without a server.
+     */
+    static String cellKey(UUID worldId, int blockX, int blockZ) {
+        return worldId + ":" + (blockX >> 7) + ":" + (blockZ >> 7);
+    }
+
+    /**
+     * Chunk radius that covers the census box (scanRadius blocks each way from
+     * the player) for the whole-box ownership pre-check. Pure, unit tested.
+     */
+    static int scanChunkRadius(int scanRadius) {
+        return (scanRadius >> 4) + 1;
     }
 
     /**
@@ -323,11 +351,15 @@ public final class WildAnimalBalancer {
         return anchor; // anchor is already validated; co-located spawns push apart
     }
 
-    /** The grassland rules: loaded and region-owned chunk, grass block, clearance, sky light. */
+    /**
+     * The grassland rules: region-owned and loaded chunk, grass block, clearance,
+     * sky light. Validation and the subsequent spawnEntity run in the same region
+     * tick, so ownership cannot change between the check here and the spawn.
+     */
     private Location validSurfaceSpot(World w, int x, int z) {
-        if (!w.isChunkLoaded(x >> 4, z >> 4)) return null; // spawning outside loaded chunks does nothing
-        // Chunk owned by a neighbouring region: skip this candidate, never force.
+        // Ownership first: never touch a chunk a neighbouring region owns.
         if (!Bukkit.isOwnedByCurrentRegion(w, x >> 4, z >> 4)) return null;
+        if (!w.isChunkLoaded(x >> 4, z >> 4)) return null; // spawning outside loaded chunks does nothing
         int y = w.getHighestBlockYAt(x, z);
         Block ground = w.getBlockAt(x, y, z);
         if (ground.getType() != Material.GRASS_BLOCK) return null; // keep it on grassland

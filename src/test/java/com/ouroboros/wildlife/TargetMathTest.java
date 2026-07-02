@@ -6,8 +6,10 @@ import org.junit.jupiter.api.Test;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 
 /**
  * Pure-logic tests for the spawn target math and the anti-farm guardrails.
@@ -129,5 +131,31 @@ class TargetMathTest {
 
         WildAnimalBalancer.Settings flagOff = pools(List.of(EntityType.COW), Map.of(), false, vanilla);
         assertEquals(List.of(EntityType.COW), WildAnimalBalancer.poolFor(flagOff, "snowy_plains"));
+    }
+
+    @Test
+    void cellKeyIsScopedPerWorld() {
+        UUID overworld = UUID.fromString("00000000-0000-0000-0000-000000000001");
+        UUID resource = UUID.fromString("00000000-0000-0000-0000-000000000002");
+        // same coordinates in different worlds must never collide on a cell
+        assertNotEquals(WildAnimalBalancer.cellKey(overworld, 100, 100),
+                WildAnimalBalancer.cellKey(resource, 100, 100));
+        // same ~128-block cell in the same world resolves to the same key
+        assertEquals(WildAnimalBalancer.cellKey(overworld, 0, 0),
+                WildAnimalBalancer.cellKey(overworld, 127, 127));
+        // adjacent cells differ, including across the negative-coordinate boundary
+        assertNotEquals(WildAnimalBalancer.cellKey(overworld, 127, 0),
+                WildAnimalBalancer.cellKey(overworld, 128, 0));
+        assertNotEquals(WildAnimalBalancer.cellKey(overworld, -1, 0),
+                WildAnimalBalancer.cellKey(overworld, 0, 0));
+    }
+
+    @Test
+    void scanChunkRadiusCoversTheCensusBox() {
+        // radius r blocks reaches at most (r >> 4) + 1 chunks from the player's chunk
+        assertEquals(7, WildAnimalBalancer.scanChunkRadius(96));
+        assertEquals(3, WildAnimalBalancer.scanChunkRadius(32));
+        assertEquals(2, WildAnimalBalancer.scanChunkRadius(16));
+        assertEquals(1, WildAnimalBalancer.scanChunkRadius(0));
     }
 }
