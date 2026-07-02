@@ -29,10 +29,11 @@ jobs:
           set -euo pipefail
           MCV=1.21.11
           PROJECT="${{ matrix.platform }}"
-          BUILD=$(curl -fsSL "https://api.papermc.io/v2/projects/$PROJECT/versions/$MCV/builds" | jq -r '.builds[-1].build')
-          FILE=$(curl -fsSL "https://api.papermc.io/v2/projects/$PROJECT/versions/$MCV/builds/$BUILD" | jq -r '.downloads.application.name')
-          curl -fsSL -o server.jar "https://api.papermc.io/v2/projects/$PROJECT/versions/$MCV/builds/$BUILD/downloads/$FILE"
-          echo "$PROJECT build $BUILD ($FILE)"
+          # The legacy api.papermc.io/v2 endpoint was retired (410); fill.papermc.io/v3 replaces it.
+          UA="WildAnimalBalancer-CI (github.com/ouroboros-smp/WildAnimalBalancer)"
+          URL=$(curl -fsSL -A "$UA" "https://fill.papermc.io/v3/projects/$PROJECT/versions/$MCV/builds/latest" | jq -r '.downloads["server:default"].url')
+          curl -fsSL -A "$UA" -o server.jar "$URL"
+          echo "$PROJECT $MCV -> $URL"
       - name: Prepare server
         run: |
           set -eu
@@ -87,10 +88,11 @@ jobs:
         run: |
           set -euo pipefail
           PROJECT=folia
-          BUILD=$(curl -fsSL "https://api.papermc.io/v2/projects/$PROJECT/versions/$MCV/builds" | jq -r '.builds[-1].build')
-          FILE=$(curl -fsSL "https://api.papermc.io/v2/projects/$PROJECT/versions/$MCV/builds/$BUILD" | jq -r '.downloads.application.name')
-          curl -fsSL -o server.jar "https://api.papermc.io/v2/projects/$PROJECT/versions/$MCV/builds/$BUILD/downloads/$FILE"
-          echo "folia build $BUILD ($FILE)"
+          # The legacy api.papermc.io/v2 endpoint was retired (410); fill.papermc.io/v3 replaces it.
+          UA="WildAnimalBalancer-CI (github.com/ouroboros-smp/WildAnimalBalancer)"
+          URL=$(curl -fsSL -A "$UA" "https://fill.papermc.io/v3/projects/$PROJECT/versions/$MCV/builds/latest" | jq -r '.downloads["server:default"].url')
+          curl -fsSL -A "$UA" -o server.jar "$URL"
+          echo "$PROJECT $MCV -> $URL"
       - name: Configure server
         run: |
           set -eu
