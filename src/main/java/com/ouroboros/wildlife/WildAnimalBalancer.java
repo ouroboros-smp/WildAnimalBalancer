@@ -21,6 +21,7 @@ import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.logging.Level;
 
 /**
  * Folia-aware wild-animal balancer.
@@ -33,6 +34,8 @@ import java.util.concurrent.atomic.AtomicInteger;
  *   - Every entity/world read and the spawn itself runs on the OWNING region
  *     thread. We get there via each player's EntityScheduler, never the global
  *     scheduler. Enumerating entities off the owning thread is a hard error.
+ *   - Entities and chunks owned by a neighbouring region are detected with
+ *     Bukkit.isOwnedByCurrentRegion and skipped, never forced.
  *   - The async driver does no world access at all. It only walks the player
  *     list and dispatches per-player tasks.
  */
@@ -57,9 +60,9 @@ public final class WildAnimalBalancer {
     private final Settings cfg;
     private final Random rng = new Random();
 
-    // coarse ~128-block cell -> cycle it was last handled, so two players sharing
-    // a region in the same cycle do not both spawn into the same patch of ground.
-    private final ConcurrentHashMap<Long, Integer> handled = new ConcurrentHashMap<>();
+    // coarse per-world ~128-block cell -> cycle it was last handled, so two players
+    // sharing an area in the same cycle do not both spawn into the same patch of ground.
+    private final ConcurrentHashMap<String, Integer> handled = new ConcurrentHashMap<>();
     private final AtomicInteger cycle = new AtomicInteger();
     private ScheduledTask driver;
 
@@ -78,7 +81,7 @@ public final class WildAnimalBalancer {
                 // 3rd arg (retired callback) is null: if the player logs off first, just skip.
                 p.getScheduler().run(plugin, task -> census(p, c), null);
             }
-        }, cfg.cycleSeconds(), cfg.cycleSeconds(), TimeUnit.SECONDS);
+        }, Math.max(1, cfg.cycleSeconds()), Math.max(1, cfg.cycleSeconds()), TimeUnit.SECONDS);
     }
 
     public void stop() {
@@ -106,8 +109,22 @@ public final class WildAnimalBalancer {
         return Math.min(deficit, cfg.maxPerCycle());
     }
 
-    /** Runs on the player's owning region thread. Safe to read and spawn entities here. */
+    /**
+     * Runs on the player's owning region thread. Backstop wrapper: nothing thrown
+     * here may escape to the region scheduler, where Folia would log it as an
+     * off-region access error. Ownership is checked before every read below, so
+     * this catch should never fire; it exists so a missed case degrades to a
+     * skipped cycle instead of a scary log line.
+     */
     private void census(Player player, int currentCycle) {
+        try {
+            runCensus(player, currentCycle);
+        } catch (Throwable t) {
+            plugin.getLogger().log(Level.FINE, "census skipped for " + player.getName(), t);
+        }
+    }
+
+    private void runCensus(Player player, int currentCycle) {
         if (!player.isOnline()) return;
         Location at = player.getLocation();
         World world = at.getWorld();
@@ -115,8 +132,9 @@ public final class WildAnimalBalancer {
         if (!cfg.enabledWorlds().isEmpty() && !cfg.enabledWorlds().contains(world.getName())) return;
 
         // Dedupe: first player to claim this ~128-block cell this cycle proceeds, others bail.
+        // Keyed per world so same-coordinate players in different worlds never collide.
         // ConcurrentHashMap.put returns the previous value atomically, so exactly one wins.
-        long cell = (((long) (at.getBlockX() >> 7)) << 32) ^ ((at.getBlockZ() >> 7) & 0xffffffffL);
+        String cell = world.getUID() + ":" + (at.getBlockX() >> 7) + ":" + (at.getBlockZ() >> 7);
         Integer was = handled.put(cell, currentCycle);
         if (was != null && was == currentCycle) return;
 
@@ -124,12 +142,10 @@ public final class WildAnimalBalancer {
         int localPlayers = 1; // the anchor player (getNearbyEntities does not include self)
         int r = cfg.scanRadius();
         for (Entity e : player.getNearbyEntities(r, r, r)) {
-            try {
-                if (e instanceof Player) { localPlayers++; continue; }
-                if (isWildAnimal(e)) wild++;
-            } catch (Throwable ignored) {
-                // entity owned by a neighbouring region (boundary): skip rather than trip the check
-            }
+            // Boundary entity owned by a neighbouring region: skip, never force.
+            if (!Bukkit.isOwnedByCurrentRegion(e)) continue;
+            if (e instanceof Player) { localPlayers++; continue; }
+            if (isWildAnimal(e)) wild++;
         }
 
         int target = targetFor(cfg, localPlayers);
@@ -141,11 +157,7 @@ public final class WildAnimalBalancer {
             Location spot = findSpawnSpot(at);
             if (spot == null) continue;
             EntityType type = pool.get(rng.nextInt(pool.size()));
-            try {
-                world.spawnEntity(spot, type, CreatureSpawnEvent.SpawnReason.CUSTOM);
-            } catch (Throwable ignored) {
-                // spot resolved into another region between find and spawn: skip
-            }
+            world.spawnEntity(spot, type, CreatureSpawnEvent.SpawnReason.CUSTOM);
         }
     }
 
@@ -169,26 +181,24 @@ public final class WildAnimalBalancer {
         World w = center.getWorld();
         if (w == null) return null;
         int min = cfg.minSpawnDist();
-        int max = cfg.scanRadius();
+        int max = Math.max(cfg.scanRadius(), min); // a min beyond the radius pins spawns to the ring edge
         for (int i = 0; i < cfg.spawnTries(); i++) {
             double ang = rng.nextDouble() * Math.PI * 2;
             double dist = min + rng.nextDouble() * (max - min);
             int x = center.getBlockX() + (int) Math.round(Math.cos(ang) * dist);
             int z = center.getBlockZ() + (int) Math.round(Math.sin(ang) * dist);
 
-            if (!w.isChunkLoaded(x >> 4, z >> 4)) continue; // unloaded, or not our region's chunk
-            try {
-                int y = w.getHighestBlockYAt(x, z);
-                Block ground = w.getBlockAt(x, y, z);
-                if (ground.getType() != Material.GRASS_BLOCK) continue; // keep it on grassland
-                Block above = w.getBlockAt(x, y + 1, z);
-                Block head = w.getBlockAt(x, y + 2, z);
-                if (!above.getType().isAir() || !head.getType().isAir()) continue; // need clearance
-                if (above.getLightFromSky() < cfg.minSkyLight()) continue; // no caves / canopy
-                return new Location(w, x + 0.5, y + 1, z + 0.5);
-            } catch (Throwable ignored) {
-                // chunk belongs to a neighbouring region: skip this candidate
-            }
+            if (!w.isChunkLoaded(x >> 4, z >> 4)) continue; // spawning outside loaded chunks does nothing
+            // Chunk owned by a neighbouring region: skip this candidate, never force.
+            if (!Bukkit.isOwnedByCurrentRegion(w, x >> 4, z >> 4)) continue;
+            int y = w.getHighestBlockYAt(x, z);
+            Block ground = w.getBlockAt(x, y, z);
+            if (ground.getType() != Material.GRASS_BLOCK) continue; // keep it on grassland
+            Block above = w.getBlockAt(x, y + 1, z);
+            Block head = w.getBlockAt(x, y + 2, z);
+            if (!above.getType().isAir() || !head.getType().isAir()) continue; // need clearance
+            if (above.getLightFromSky() < cfg.minSkyLight()) continue; // no caves / canopy
+            return new Location(w, x + 0.5, y + 1, z + 0.5);
         }
         return null;
     }
