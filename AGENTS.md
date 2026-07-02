@@ -25,8 +25,9 @@ A Minecraft server plugin (Folia-native, Paper-compatible) for Ouroboros SMP tha
 
 ## Folia threading rules (do not violate)
 - The plugin anchors all work on players. A lightweight async task walks the online player list each cycle and hands each player off to their own region thread via `Entity#getScheduler()`.
-- Everything that touches the world (counting nearby animals, checking blocks, spawning) happens on the region thread that owns that location. Never read or spawn an entity from a thread that does not own it.
-- Entities sitting across a region boundary are skipped, not forced, so the log never shows "accessing entity state off owning region".
+- Everything that touches the world (counting nearby animals, checking blocks, spawning) happens on the player's owning region thread. Never read or spawn an entity from a thread that does not own it.
+- Entities and chunks the player's region does not own (region boundaries) are detected with `Bukkit.isOwnedByCurrentRegion` and skipped that cycle, not forced, so the log never shows "accessing entity state off owning region".
+- Overlapping player areas are deduped each cycle by a coarse per-world ~128-block cell claim: one census runs per cell per cycle, with the target scaled to every player found in it.
 - On Paper these scheduler calls route to the single main thread, so the same jar behaves identically with no separate build.
 
 ## Config (src/main/resources/config.yml, live reload via /wildlife reload)
