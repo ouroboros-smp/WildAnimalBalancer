@@ -31,7 +31,7 @@ A Minecraft server plugin (Folia-native, Paper-compatible) for Ouroboros SMP tha
 - On Paper these scheduler calls route to the single main thread, so the same jar behaves identically with no separate build.
 
 ## Config (src/main/resources/config.yml, live reload via /wildlife reload)
-Key knobs: `cycle-seconds` (30), `scan-radius` (96), `base-target` (8), `per-additional-player` (4), `max-target` (40), `max-per-cycle` (6), `min-spawn-distance` (24), `spawn-tries` (20), `min-sky-light` (7), `animals` (COW, PIG, SHEEP, CHICKEN as Bukkit EntityType names), `enabled-worlds` (empty means every world). Target for an area = `base-target + per-additional-player * (extra players)`, capped at `max-target`.
+Key knobs: `cycle-seconds` (30), `scan-radius` (96), `base-target` (8), `per-additional-player` (4), `max-target` (40), `max-per-cycle` (6), `deficit-cycles` (3, consecutive short cycles required before a top-up), `cell-hourly-budget` (30, most spawns per ~128-block area per hour), `persistent-spawns` (true, spawned animals do not despawn when players leave), `min-spawn-distance` (24), `spawn-tries` (20), `min-sky-light` (7), `animals` (COW, PIG, SHEEP, CHICKEN as Bukkit EntityType names), `biome-animals` (empty, per-biome species overrides; an empty list disables a biome), `enabled-worlds` (empty means every world). Target for an area = `base-target + per-additional-player * (extra players)`, capped at `max-target`. `deficit-cycles` and `cell-hourly-budget` are the anti-farm guardrails; top-ups spawn as one same-species group per cycle.
 
 ## CI (.github/workflows)
 - build.yml: gradle build + jar artifact on push to main and on PRs.
