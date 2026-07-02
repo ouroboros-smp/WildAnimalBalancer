@@ -1,0 +1,45 @@
+# AGENTS.md - WildAnimalBalancer
+
+Agent-facing guide for this repo. The human overview is in README.md; the design rationale is in CONTEXT.md. Read all three before changing code.
+
+## What this is
+A Minecraft server plugin (Folia-native, Paper-compatible) for Ouroboros SMP that keeps wild animals available where players actually are. It watches the area around each online player and tops up wild animals when that area falls below a demand-scaled target.
+
+## Stack and targets
+- Language: Java 21 (toolchain pinned in build.gradle.kts). Do not raise the compile target above 21.
+- Server API: `io.papermc.paper:paper-api:1.21.11-R0.1-SNAPSHOT`, compileOnly. The Folia schedulers are part of paper-api, so this one dependency covers Paper and Folia across 1.21.x. No libraries to shade.
+- Build: Gradle (Kotlin DSL), wrapper 8.14.2, `xyz.jpenilla.run-paper` for local runs.
+- Manifest: src/main/resources/plugin.yml (`folia-supported: true`, `api-version: '1.21'`).
+- group `com.ouroboros`, version 1.0.0. Public repo.
+
+## Build, test, run
+- Build + unit tests: `./gradlew build` (jar lands at build/libs/WildAnimalBalancer-1.0.0.jar).
+- Unit tests only: `./gradlew test` (JUnit 5 + Mockito).
+- Local server: `./gradlew runServer` (downloads Paper 1.21.11).
+- On Windows use `.\gradlew.bat`. After regenerating the wrapper, run `git update-index --chmod=+x gradlew` or CI fails on a non-executable wrapper.
+
+## Layout
+- `com.ouroboros.wildlife.WildlifePlugin`: JavaPlugin entry. Loads config, registers `/wildlife`, starts and stops the balancer.
+- `com.ouroboros.wildlife.WildAnimalBalancer`: the cycle engine. Counts, targets, and spawns.
+- Tests: ConfigParsingTest, TargetMathTest, WildAnimalPredicateTest.
+
+## Folia threading rules (do not violate)
+- The plugin anchors all work on players. A lightweight async task walks the online player list each cycle and hands each player off to their own region thread via `Entity#getScheduler()`.
+- Everything that touches the world (counting nearby animals, checking blocks, spawning) happens on the region thread that owns that location. Never read or spawn an entity from a thread that does not own it.
+- Entities sitting across a region boundary are skipped, not forced, so the log never shows "accessing entity state off owning region".
+- On Paper these scheduler calls route to the single main thread, so the same jar behaves identically with no separate build.
+
+## Config (src/main/resources/config.yml, live reload via /wildlife reload)
+Key knobs: `cycle-seconds` (30), `scan-radius` (96), `base-target` (8), `per-additional-player` (4), `max-target` (40), `max-per-cycle` (6), `min-spawn-distance` (24), `spawn-tries` (20), `min-sky-light` (7), `animals` (COW, PIG, SHEEP, CHICKEN as Bukkit EntityType names), `enabled-worlds` (empty means every world). Target for an area = `base-target + per-additional-player * (extra players)`, capped at `max-target`.
+
+## CI (.github/workflows)
+- build.yml: gradle build + jar artifact on push to main and on PRs.
+- integration.yml: boots real Paper and Folia 1.21.11 servers (boot-smoke), asserts "WildAnimalBalancer running." with no enable or Folia errors; plus a Folia E2E driven by a Mineflayer bot (pinned to 1.21.4 because Mineflayer's protocol caps there; plugin behaviour is identical across 1.21.x).
+- release.yml: pushing a `v*` tag builds and publishes to GitHub Release + Modrinth via mc-publish. `modrinth-id` is still the placeholder `YOUR_MODRINTH_PROJECT_ID`; set it before a real release.
+
+## House rules
+- No em dashes anywhere (code, comments, docs). Use commas, periods, parentheses, or a semicolon.
+- Conventional commits: feat:, fix:, docs:, chore:, refactor:.
+- main is protected. Land changes via PR; do not push to main directly or force-push.
+- Do not commit secrets and do not bypass pre-commit hooks.
+- "Wild" is a heuristic: anything not tamed, leashed, or name-tagged. There is a marked spot in the code for a claims-plugin check if strict separation is ever needed.
