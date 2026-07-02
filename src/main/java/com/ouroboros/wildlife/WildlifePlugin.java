@@ -2,14 +2,22 @@ package com.ouroboros.wildlife;
 
 import org.bukkit.command.Command;
 import org.bukkit.command.CommandSender;
+import org.bukkit.configuration.ConfigurationSection;
 import org.bukkit.configuration.file.FileConfiguration;
+import org.bukkit.configuration.file.YamlConfiguration;
 import org.bukkit.entity.EntityType;
 import org.bukkit.plugin.java.JavaPlugin;
 
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.InputStreamReader;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Set;
 import java.util.function.Consumer;
 
@@ -44,15 +52,28 @@ public final class WildlifePlugin extends JavaPlugin {
     }
 
     private WildAnimalBalancer.Settings loadSettings() {
-        return parseSettings(getConfig(),
-                name -> getLogger().warning("Unknown animal type in config, skipping: " + name));
+        Consumer<String> warn = name -> getLogger().warning("Unknown animal type in config, skipping: " + name);
+        Map<String, List<EntityType>> vanilla;
+        try (InputStream in = getResource(VANILLA_BIOME_RESOURCE)) {
+            vanilla = loadBiomeResource(in, warn);
+        } catch (IOException ex) {
+            getLogger().warning("Could not read bundled " + VANILLA_BIOME_RESOURCE + "; vanilla biome filtering disabled.");
+            vanilla = Map.of();
+        }
+        return parseSettings(getConfig(), vanilla, warn);
     }
+
+    /** Bundled snapshot of vanilla per-biome passive animal spawns (see that file's header). */
+    static final String VANILLA_BIOME_RESOURCE = "vanilla-biome-animals.yml";
 
     /**
      * Build Settings from a configuration. Pure aside from the warning callback,
      * so it can be unit tested against the bundled config.yml without a live server.
+     * vanillaBiomeAnimals is the parsed bundled snapshot (see loadBiomeResource).
      */
-    static WildAnimalBalancer.Settings parseSettings(FileConfiguration c, Consumer<String> onUnknownAnimal) {
+    static WildAnimalBalancer.Settings parseSettings(FileConfiguration c,
+                                                     Map<String, List<EntityType>> vanillaBiomeAnimals,
+                                                     Consumer<String> onUnknownAnimal) {
         List<EntityType> animals = new ArrayList<>();
         for (String name : c.getStringList("animals")) {
             try {
@@ -68,6 +89,11 @@ public final class WildlifePlugin extends JavaPlugin {
             animals.add(EntityType.CHICKEN);
         }
 
+        // Per-biome overrides: keys normalised to lowercase biome key paths, values
+        // replace the global list in that biome. An empty list disables the biome.
+        Map<String, List<EntityType>> biomeAnimals =
+                parseBiomeMap(c.getConfigurationSection("biome-animals"), onUnknownAnimal);
+
         Set<String> worlds = new HashSet<>(c.getStringList("enabled-worlds"));
 
         return new WildAnimalBalancer.Settings(
@@ -80,9 +106,46 @@ public final class WildlifePlugin extends JavaPlugin {
                 c.getInt("min-spawn-distance", 24),
                 c.getInt("spawn-tries", 20),
                 c.getInt("min-sky-light", 7),
+                c.getInt("deficit-cycles", 3),
+                c.getInt("cell-hourly-budget", 30),
+                c.getBoolean("persistent-spawns", true),
                 animals,
+                biomeAnimals,
+                c.getBoolean("vanilla-biome-defaults", true),
+                vanillaBiomeAnimals,
                 worlds
         );
+    }
+
+    /**
+     * Parse a section of biome-key -> species-list entries. Keys are normalised
+     * to lowercase, unknown species are reported and skipped, a null section
+     * yields an empty map. Shared by the config's biome-animals section and the
+     * bundled vanilla snapshot.
+     */
+    static Map<String, List<EntityType>> parseBiomeMap(ConfigurationSection section, Consumer<String> onUnknownAnimal) {
+        Map<String, List<EntityType>> map = new HashMap<>();
+        if (section == null) return map;
+        for (String biome : section.getKeys(false)) {
+            List<EntityType> list = new ArrayList<>();
+            for (String name : section.getStringList(biome)) {
+                try {
+                    list.add(EntityType.valueOf(name.toUpperCase(Locale.ROOT)));
+                } catch (IllegalArgumentException ex) {
+                    onUnknownAnimal.accept(name);
+                }
+            }
+            map.put(biome.toLowerCase(Locale.ROOT), list);
+        }
+        return map;
+    }
+
+    /** Parse the bundled vanilla biome snapshot from a resource stream. */
+    static Map<String, List<EntityType>> loadBiomeResource(InputStream in, Consumer<String> onUnknownAnimal) {
+        if (in == null) return Map.of();
+        YamlConfiguration yaml = YamlConfiguration.loadConfiguration(
+                new InputStreamReader(in, StandardCharsets.UTF_8));
+        return parseBiomeMap(yaml, onUnknownAnimal);
     }
 
     @Override

@@ -18,7 +18,7 @@ Every cycle (30 seconds by default), for each online player, it:
 
 1. Counts wild animals in the area around that player.
 2. Works out a target based on how many players are sharing that area.
-3. If the area is short, spawns the difference on valid grassland nearby, up to a per cycle cap.
+3. If the area has stayed short for several cycles, spawns the difference as a small same species herd on valid grassland nearby, up to a per cycle cap and an hourly per area budget.
 
 Animals show up where people are playing, scaled to how busy the area is. Empty wilderness nobody is standing in stays empty, which is the point.
 
@@ -30,7 +30,11 @@ Animals show up where people are playing, scaled to how busy the area is. Empty 
 - Paper compatible. The same jar runs on Paper unchanged. It compiles against paper-api only, with no extra libraries to shade.
 - Wild only. Tamed, leashed, and name tagged animals are ignored, so it does not pad your players' farms or count their pets.
 - Throttled. A per cycle spawn cap keeps top ups gradual instead of dropping a herd on someone all at once.
-- Configurable. Species list, targets, radius, and a per world allowlist, all in `config.yml`.
+- Farm proof. A shortage must persist for several cycles before a top up, and every area has an hourly spawn budget. Standing in a field and killing everything on repeat stops paying out, so breeding stays the efficient path to bulk food.
+- Herds, not scatter. Each top up spawns one species as a small group around a single spot, like worldgen herds.
+- Persistent. Spawned animals do not despawn when players leave, so top ups genuinely repopulate the area.
+- Biome aware. A bundled snapshot of vanilla spawn data narrows the species list per biome, so no pigs on snowy plains and only mooshrooms on mushroom fields. It only ever filters; species you did not configure are never added. Overridable per biome, or disable it entirely.
+- Configurable. Species list, targets, radius, per biome species overrides, and a per world allowlist, all in `config.yml`.
 - Live reload. Retune with a command, no restart.
 
 ## How it works
@@ -70,10 +74,15 @@ All settings live in `config.yml`. Edit, then run `/wildlife reload` to apply wi
 | `per-additional-player` | 4 | Extra wanted for each additional player sharing the area. |
 | `max-target` | 40 | Hard ceiling per area, regardless of crowd size. |
 | `max-per-cycle` | 6 | Most animals spawned per area per cycle. Keeps top ups gradual. |
+| `deficit-cycles` | 3 | Consecutive short cycles required before a top up. Stops instant refills after a slaughter. |
+| `cell-hourly-budget` | 30 | Most animals spawned per ~128 block area per hour. The anti farm guardrail. |
+| `persistent-spawns` | true | Spawned animals do not despawn when players leave. |
 | `min-spawn-distance` | 24 | Closest an animal will spawn to the player. |
 | `spawn-tries` | 20 | Location attempts per animal before giving up on a spot. |
 | `min-sky-light` | 7 | Minimum sky light at the spawn block. Keeps spawns out of caves and shade. |
 | `animals` | COW, PIG, SHEEP, CHICKEN | Species to spawn. Uses Bukkit EntityType names. |
+| `vanilla-biome-defaults` | true | Narrow the species list per biome to what vanilla spawns there, using a bundled snapshot of vanilla Java 1.21 spawn data. Filter only, never adds species. Unknown (custom or datapack) biomes are not filtered. |
+| `biome-animals` | (empty) | Per biome species overrides. Beats the vanilla filter. An empty list for a biome disables it. |
 | `enabled-worlds` | (empty) | Worlds to run in. Empty means every world. |
 
 The target for an area is `base-target + per-additional-player * (extra players)`, capped at `max-target`.
@@ -92,7 +101,7 @@ The target for an area is `base-target + per-additional-player * (extra players)
 
 ## Tuning tips
 
-- Still getting shortage complaints? Raise `max-per-cycle` before you raise the targets. That fills deficits faster without changing how many animals can exist in an area.
+- Still getting shortage complaints? Look at `deficit-cycles` and `cell-hourly-budget` first; they decide how quickly and how much an area can refill. Raising `max-per-cycle` fills deficits faster within those limits. All three are economy levers: the cheaper wild meat is, the less your players breed, so move them gently.
 - Keep `scan-radius` at or below your view distance in blocks. Spawning outside loaded chunks does nothing.
 - To run this only in your survival world, list it under `enabled-worlds`. Leaving it empty runs everywhere, including mining or resource worlds where you may not want it.
 - Want more variety? Add any breedable animal's EntityType to the `animals` list, for example `HORSE`, `RABBIT`, or `GOAT`.
