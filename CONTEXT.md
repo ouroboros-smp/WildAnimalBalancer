@@ -6,7 +6,7 @@ Deep background for agents and contributors. For build and commands see AGENTS.m
 On a long-running survival server, passive animals run out. Cows, pigs, sheep, and chickens spawn almost entirely at world generation, in herds, when a chunk is first created. After that, vanilla repopulation is slow and capped: the animal mob cap sits around 10, and the game only attempts an animal spawn roughly every 400 ticks (about 20 seconds), against every tick for monsters. Players settle an area, eat through the original herds, and food stops appearing. Raising server-wide spawn rates boosts spawns everywhere and still will not reliably repopulate a stripped, settled area.
 
 ## What it does
-Every cycle (30 seconds by default), for each online player it counts wild animals in the area around that player, works out a target from how many players share that area, and if the area is short it spawns the difference on valid grassland nearby, up to a per-cycle cap. When several players share an area, a coarse per-world cell claim dedupes the overlap so that area is topped up once per cycle, with the target scaled to everyone present. Animals show up where people are playing, scaled to how busy the area is. Empty wilderness nobody is standing in stays empty, which is the point.
+Every cycle (30 seconds by default), for each occupied area (one census per coarse per-world cell per cycle, anchored on the first player dispatched there) it counts wild animals around the anchor player, works out a target from how many players share that scan area, and if the area is short it spawns the difference on valid grassland nearby, up to a per-cycle cap. Players sharing a cell are folded into that one census rather than each triggering their own. Animals show up where people are playing, scaled to how busy the area is. Empty wilderness nobody is standing in stays empty, which is the point.
 
 ## Design decisions
 - Demand-driven, not blanket. Top-ups happen around players, not scattered across every loaded chunk.
@@ -23,6 +23,7 @@ Every cycle (30 seconds by default), for each online player it counts wild anima
 ## Tuning notes
 - Still getting shortage complaints? Look at `deficit-cycles` and `cell-hourly-budget` first; they decide how quickly and how much an area can refill. Raising `max-per-cycle` fills deficits faster within those limits. All three are economy levers: the cheaper wild meat is, the less players breed, so move them gently.
 - Keep `scan-radius` at or below view distance in blocks; spawning outside loaded chunks does nothing.
+- The deficit streak is tracked per ~128-block cell. A player based right on a cell border can alternate between cells and struggle to build a streak in either; if a specific base reports no top-ups, check this before raising `deficit-cycles` tolerance.
 - Pairs well with server config: in paper-world-defaults.yml, lower `entities.spawning.ticks-per-spawn.creature` and set `per-player-mob-spawns: true`.
 
 ## Where it fits
