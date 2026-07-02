@@ -4,20 +4,22 @@ import org.bukkit.entity.EntityType;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
 /**
- * Pure-logic tests for the spawn target math. No server required.
- * Mirrors the defaults documented in the README and config.yml.
+ * Pure-logic tests for the spawn target math and the anti-farm guardrails.
+ * No server required. Mirrors the defaults documented in the README and config.yml.
  */
 class TargetMathTest {
 
     private static WildAnimalBalancer.Settings cfg(int base, int perPlayer, int max, int maxPerCycle) {
         return new WildAnimalBalancer.Settings(
                 30L, 96, base, perPlayer, max, maxPerCycle, 24, 20, 7,
-                List.of(EntityType.COW), Set.of());
+                3, 30, true,
+                List.of(EntityType.COW), Map.of(), Set.of());
     }
 
     @Test
@@ -56,5 +58,40 @@ class TargetMathTest {
     void spawnCountZeroWhenAtOrAboveTarget() {
         assertEquals(0, WildAnimalBalancer.spawnCount(cfg(8, 4, 40, 6), 8, 8));
         assertEquals(0, WildAnimalBalancer.spawnCount(cfg(8, 4, 40, 6), 8, 12));
+    }
+
+    @Test
+    void deficitStreakCountsConsecutiveShortfalls() {
+        assertEquals(1, WildAnimalBalancer.nextDeficitStreak(0, false, true));
+        assertEquals(3, WildAnimalBalancer.nextDeficitStreak(2, true, true));
+    }
+
+    @Test
+    void deficitStreakRestartsAfterAGapAndClearsOnRecovery() {
+        // player left the cell and came back later: not consecutive, streak restarts
+        assertEquals(1, WildAnimalBalancer.nextDeficitStreak(2, false, true));
+        // the area recovered on its own: streak clears entirely
+        assertEquals(0, WildAnimalBalancer.nextDeficitStreak(2, true, false));
+    }
+
+    @Test
+    void hourlyBudgetCapsSpawnsAndNeverGoesNegative() {
+        WildAnimalBalancer.Settings c = cfg(8, 4, 40, 6); // cell-hourly-budget 30
+        assertEquals(6, WildAnimalBalancer.budgetedSpawns(c, 6, 0));
+        assertEquals(2, WildAnimalBalancer.budgetedSpawns(c, 6, 28));
+        assertEquals(0, WildAnimalBalancer.budgetedSpawns(c, 6, 30));
+        assertEquals(0, WildAnimalBalancer.budgetedSpawns(c, 6, 35));
+    }
+
+    @Test
+    void biomeOverridesReplaceThePoolOnlyWhereMapped() {
+        WildAnimalBalancer.Settings c = new WildAnimalBalancer.Settings(
+                30L, 96, 8, 4, 40, 6, 24, 20, 7, 3, 30, true,
+                List.of(EntityType.COW),
+                Map.of("snowy_plains", List.of(EntityType.SHEEP), "desert", List.of()),
+                Set.of());
+        assertEquals(List.of(EntityType.SHEEP), WildAnimalBalancer.poolFor(c, "snowy_plains"));
+        assertEquals(List.of(), WildAnimalBalancer.poolFor(c, "desert"));
+        assertEquals(List.of(EntityType.COW), WildAnimalBalancer.poolFor(c, "plains"));
     }
 }

@@ -2,14 +2,17 @@ package com.ouroboros.wildlife;
 
 import org.bukkit.command.Command;
 import org.bukkit.command.CommandSender;
+import org.bukkit.configuration.ConfigurationSection;
 import org.bukkit.configuration.file.FileConfiguration;
 import org.bukkit.entity.EntityType;
 import org.bukkit.plugin.java.JavaPlugin;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Set;
 import java.util.function.Consumer;
 
@@ -68,6 +71,24 @@ public final class WildlifePlugin extends JavaPlugin {
             animals.add(EntityType.CHICKEN);
         }
 
+        // Per-biome overrides: keys normalised to lowercase biome key paths, values
+        // replace the global list in that biome. An empty list disables the biome.
+        Map<String, List<EntityType>> biomeAnimals = new HashMap<>();
+        ConfigurationSection biomes = c.getConfigurationSection("biome-animals");
+        if (biomes != null) {
+            for (String biome : biomes.getKeys(false)) {
+                List<EntityType> list = new ArrayList<>();
+                for (String name : biomes.getStringList(biome)) {
+                    try {
+                        list.add(EntityType.valueOf(name.toUpperCase(Locale.ROOT)));
+                    } catch (IllegalArgumentException ex) {
+                        onUnknownAnimal.accept(name);
+                    }
+                }
+                biomeAnimals.put(biome.toLowerCase(Locale.ROOT), list);
+            }
+        }
+
         Set<String> worlds = new HashSet<>(c.getStringList("enabled-worlds"));
 
         return new WildAnimalBalancer.Settings(
@@ -80,7 +101,11 @@ public final class WildlifePlugin extends JavaPlugin {
                 c.getInt("min-spawn-distance", 24),
                 c.getInt("spawn-tries", 20),
                 c.getInt("min-sky-light", 7),
+                c.getInt("deficit-cycles", 3),
+                c.getInt("cell-hourly-budget", 30),
+                c.getBoolean("persistent-spawns", true),
                 animals,
+                biomeAnimals,
                 worlds
         );
     }

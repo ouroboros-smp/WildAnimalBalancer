@@ -9,6 +9,7 @@ import org.bukkit.block.Block;
 import org.bukkit.entity.Animals;
 import org.bukkit.entity.Entity;
 import org.bukkit.entity.EntityType;
+import org.bukkit.entity.LivingEntity;
 import org.bukkit.entity.Player;
 import org.bukkit.entity.Tameable;
 import org.bukkit.event.entity.CreatureSpawnEvent;
@@ -16,6 +17,8 @@ import org.bukkit.plugin.Plugin;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
+import java.util.Map;
 import java.util.Random;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
@@ -38,6 +41,13 @@ import java.util.logging.Level;
  *     Bukkit.isOwnedByCurrentRegion and skipped, never forced.
  *   - The async driver does no world access at all. It only walks the player
  *     list and dispatches per-player tasks.
+ *
+ * Anti-farm guardrails, so the balancer never becomes a meat faucet:
+ *   - A shortage must persist for deficit-cycles consecutive censused cycles
+ *     before any top-up happens. A just-slaughtered herd does not refill on
+ *     the spot, and a player passing through an area triggers nothing.
+ *   - Each ~128-block cell has an hourly spawn budget (cell-hourly-budget).
+ *     Once spent, the cell refills no further until the window rolls over.
  */
 public final class WildAnimalBalancer {
 
@@ -52,19 +62,35 @@ public final class WildAnimalBalancer {
             int minSpawnDist,
             int spawnTries,
             int minSkyLight,
+            int deficitCycles,
+            int cellHourlyBudget,
+            boolean persistentSpawns,
             List<EntityType> animals,
+            Map<String, List<EntityType>> biomeAnimals,
             Set<String> enabledWorlds
     ) {}
+
+    /** Blocks of scatter around the group anchor so a top-up reads as a herd. */
+    private static final int GROUP_RADIUS = 4;
+    private static final long BUDGET_WINDOW_MILLIS = TimeUnit.HOURS.toMillis(1);
 
     private final Plugin plugin;
     private final Settings cfg;
     private final Random rng = new Random();
 
-    // coarse per-world ~128-block cell -> cycle it was last handled, so two players
-    // sharing an area in the same cycle do not both spawn into the same patch of ground.
+    // All three maps are keyed by the per-world ~128-block cell (see cellKey).
+    // handled: cycle the cell was last claimed, so two players sharing a cell in
+    // the same cycle do not both spawn into the same patch of ground.
     private final ConcurrentHashMap<String, Integer> handled = new ConcurrentHashMap<>();
+    // deficits: how many consecutive censused cycles the cell has been short.
+    private final ConcurrentHashMap<String, CellStreak> deficits = new ConcurrentHashMap<>();
+    // budgets: spawns already spent in the cell's current hourly window.
+    private final ConcurrentHashMap<String, CellBudget> budgets = new ConcurrentHashMap<>();
     private final AtomicInteger cycle = new AtomicInteger();
     private ScheduledTask driver;
+
+    private record CellStreak(int cycle, int streak) {}
+    private record CellBudget(long windowStart, int spawned) {}
 
     public WildAnimalBalancer(Plugin plugin, Settings cfg) {
         this.plugin = plugin;
@@ -76,6 +102,9 @@ public final class WildAnimalBalancer {
         driver = Bukkit.getAsyncScheduler().runAtFixedRate(plugin, t -> {
             int c = cycle.incrementAndGet();
             handled.values().removeIf(v -> v < c - 2); // prune stale cells
+            deficits.values().removeIf(v -> v.cycle() < c - 2);
+            long cutoff = System.currentTimeMillis() - BUDGET_WINDOW_MILLIS;
+            budgets.values().removeIf(b -> b.windowStart() < cutoff);
             for (Player p : new ArrayList<>(Bukkit.getOnlinePlayers())) {
                 // EntityScheduler.run executes on whatever region currently owns this player.
                 // 3rd arg (retired callback) is null: if the player logs off first, just skip.
@@ -110,6 +139,34 @@ public final class WildAnimalBalancer {
     }
 
     /**
+     * Consecutive-shortage streak for a cell. The streak only grows while the cell
+     * keeps getting censused (a player is there) AND keeps coming up short; a gap
+     * in either restarts it. Pure function, extracted for unit testing.
+     */
+    static int nextDeficitStreak(int prevStreak, boolean consecutive, boolean hasDeficit) {
+        if (!hasDeficit) return 0;
+        return consecutive ? prevStreak + 1 : 1;
+    }
+
+    /**
+     * Spawns allowed this cycle after the cell's hourly budget is accounted for.
+     * Pure function, extracted for unit testing.
+     */
+    static int budgetedSpawns(Settings cfg, int wanted, int spentThisWindow) {
+        return Math.max(0, Math.min(wanted, cfg.cellHourlyBudget() - spentThisWindow));
+    }
+
+    /**
+     * Species pool for a biome: the biome-animals override when one is configured
+     * (an empty override disables the biome), otherwise the global animals list.
+     * Biome keys are lowercase key paths, e.g. "snowy_plains".
+     */
+    static List<EntityType> poolFor(Settings cfg, String biomeKey) {
+        List<EntityType> pool = cfg.biomeAnimals().get(biomeKey);
+        return pool != null ? pool : cfg.animals();
+    }
+
+    /**
      * Runs on the player's owning region thread. Backstop wrapper: nothing thrown
      * here may escape to the region scheduler, where Folia would log it as an
      * off-region access error. Ownership is checked before every read below, so
@@ -134,7 +191,7 @@ public final class WildAnimalBalancer {
         // Dedupe: first player to claim this ~128-block cell this cycle proceeds, others bail.
         // Keyed per world so same-coordinate players in different worlds never collide.
         // ConcurrentHashMap.put returns the previous value atomically, so exactly one wins.
-        String cell = world.getUID() + ":" + (at.getBlockX() >> 7) + ":" + (at.getBlockZ() >> 7);
+        String cell = cellKey(world, at);
         Integer was = handled.put(cell, currentCycle);
         if (was != null && was == currentCycle) return;
 
@@ -149,16 +206,31 @@ public final class WildAnimalBalancer {
         }
 
         int target = targetFor(cfg, localPlayers);
-        int toSpawn = spawnCount(cfg, target, wild);
+        int deficit = spawnCount(cfg, target, wild);
+
+        // Guardrail: the shortage must persist before it is refilled. The streak
+        // only advances while someone is here to census the cell, so this doubles
+        // as a dwell requirement; passers-by never build one up.
+        CellStreak prev = deficits.get(cell);
+        int streak = nextDeficitStreak(prev == null ? 0 : prev.streak(),
+                prev != null && prev.cycle() == currentCycle - 1, deficit > 0);
+        deficits.put(cell, new CellStreak(currentCycle, streak));
+        if (deficit <= 0 || streak < cfg.deficitCycles()) return;
+
+        // Guardrail: hourly per-cell budget. Camping a field and re-killing it
+        // stops paying out once the window is spent.
+        long now = System.currentTimeMillis();
+        CellBudget budget = budgets.get(cell);
+        if (budget == null || now - budget.windowStart() >= BUDGET_WINDOW_MILLIS) budget = new CellBudget(now, 0);
+        int toSpawn = budgetedSpawns(cfg, deficit, budget.spawned());
         if (toSpawn <= 0) return;
 
-        List<EntityType> pool = cfg.animals();
-        for (int i = 0; i < toSpawn; i++) {
-            Location spot = findSpawnSpot(at);
-            if (spot == null) continue;
-            EntityType type = pool.get(rng.nextInt(pool.size()));
-            world.spawnEntity(spot, type, CreatureSpawnEvent.SpawnReason.CUSTOM);
-        }
+        int spawned = spawnGroup(at, toSpawn);
+        if (spawned > 0) budgets.put(cell, new CellBudget(budget.windowStart(), budget.spawned() + spawned));
+    }
+
+    private static String cellKey(World world, Location at) {
+        return world.getUID() + ":" + (at.getBlockX() >> 7) + ":" + (at.getBlockZ() >> 7);
     }
 
     /**
@@ -176,6 +248,33 @@ public final class WildAnimalBalancer {
         return true;
     }
 
+    /**
+     * Spawns one same-species group around a single anchor spot, like a worldgen
+     * herd, instead of scattering singles across the whole ring. The species is
+     * drawn from the biome override for the anchor's biome when one is configured.
+     * Returns how many animals actually spawned.
+     */
+    private int spawnGroup(Location center, int count) {
+        World w = center.getWorld();
+        Location anchor = findSpawnSpot(center);
+        if (anchor == null) return 0;
+        String biome = anchor.getBlock().getBiome().getKey().getKey().toLowerCase(Locale.ROOT);
+        List<EntityType> pool = poolFor(cfg, biome);
+        if (pool.isEmpty()) return 0; // biome explicitly mapped to no spawns
+
+        EntityType type = pool.get(rng.nextInt(pool.size()));
+        int spawned = 0;
+        for (int i = 0; i < count; i++) {
+            Location spot = jitterNear(center, anchor);
+            Entity e = w.spawnEntity(spot, type, CreatureSpawnEvent.SpawnReason.CUSTOM);
+            // Like naturally generated passive animals, top-ups should stay put and
+            // repopulate the area, not evaporate when the player wanders off.
+            if (cfg.persistentSpawns() && e instanceof LivingEntity le) le.setRemoveWhenFarAway(false);
+            spawned++;
+        }
+        return spawned;
+    }
+
     /** Find a sensible surface spot near the player, on a loaded chunk this region owns. */
     private Location findSpawnSpot(Location center) {
         World w = center.getWorld();
@@ -187,19 +286,40 @@ public final class WildAnimalBalancer {
             double dist = min + rng.nextDouble() * (max - min);
             int x = center.getBlockX() + (int) Math.round(Math.cos(ang) * dist);
             int z = center.getBlockZ() + (int) Math.round(Math.sin(ang) * dist);
-
-            if (!w.isChunkLoaded(x >> 4, z >> 4)) continue; // spawning outside loaded chunks does nothing
-            // Chunk owned by a neighbouring region: skip this candidate, never force.
-            if (!Bukkit.isOwnedByCurrentRegion(w, x >> 4, z >> 4)) continue;
-            int y = w.getHighestBlockYAt(x, z);
-            Block ground = w.getBlockAt(x, y, z);
-            if (ground.getType() != Material.GRASS_BLOCK) continue; // keep it on grassland
-            Block above = w.getBlockAt(x, y + 1, z);
-            Block head = w.getBlockAt(x, y + 2, z);
-            if (!above.getType().isAir() || !head.getType().isAir()) continue; // need clearance
-            if (above.getLightFromSky() < cfg.minSkyLight()) continue; // no caves / canopy
-            return new Location(w, x + 0.5, y + 1, z + 0.5);
+            Location spot = validSurfaceSpot(w, x, z);
+            if (spot != null) return spot;
         }
         return null;
+    }
+
+    /** Small scatter around the group anchor, still outside min-spawn-distance. */
+    private Location jitterNear(Location center, Location anchor) {
+        World w = anchor.getWorld();
+        long min = cfg.minSpawnDist();
+        for (int i = 0; i < 4; i++) {
+            int x = anchor.getBlockX() + rng.nextInt(GROUP_RADIUS * 2 + 1) - GROUP_RADIUS;
+            int z = anchor.getBlockZ() + rng.nextInt(GROUP_RADIUS * 2 + 1) - GROUP_RADIUS;
+            long dx = x - center.getBlockX();
+            long dz = z - center.getBlockZ();
+            if (dx * dx + dz * dz < min * min) continue; // stay outside min-spawn-distance
+            Location spot = validSurfaceSpot(w, x, z);
+            if (spot != null) return spot;
+        }
+        return anchor; // anchor is already validated; co-located spawns push apart
+    }
+
+    /** The grassland rules: loaded and region-owned chunk, grass block, clearance, sky light. */
+    private Location validSurfaceSpot(World w, int x, int z) {
+        if (!w.isChunkLoaded(x >> 4, z >> 4)) return null; // spawning outside loaded chunks does nothing
+        // Chunk owned by a neighbouring region: skip this candidate, never force.
+        if (!Bukkit.isOwnedByCurrentRegion(w, x >> 4, z >> 4)) return null;
+        int y = w.getHighestBlockYAt(x, z);
+        Block ground = w.getBlockAt(x, y, z);
+        if (ground.getType() != Material.GRASS_BLOCK) return null; // keep it on grassland
+        Block above = w.getBlockAt(x, y + 1, z);
+        Block head = w.getBlockAt(x, y + 2, z);
+        if (!above.getType().isAir() || !head.getType().isAir()) return null; // need clearance
+        if (above.getLightFromSky() < cfg.minSkyLight()) return null; // no caves / canopy
+        return new Location(w, x + 0.5, y + 1, z + 0.5);
     }
 }

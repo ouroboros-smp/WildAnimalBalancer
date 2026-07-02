@@ -17,8 +17,23 @@ per-additional-player: 4
 max-target: 40
 
 # Most animals spawned per area per cycle. Keeps top-ups gradual instead of bursty.
-# If complaints persist, raise THIS before you raise the targets.
+# Raising it fills shortages faster, but cell-hourly-budget still caps the hourly total.
 max-per-cycle: 6
+
+# Consecutive cycles an area must stay short before any top-up happens. With
+# 30-second cycles the default means a shortage must persist for about 90
+# seconds. A just-slaughtered herd does not refill on the spot, and players
+# passing through an area trigger nothing.
+deficit-cycles: 3
+
+# Most animals spawned per ~128-block area per hour. This is the anti-farm
+# guardrail: camping a field and killing everything on repeat cannot produce
+# more than this per hour, no matter how fast the area is emptied.
+cell-hourly-budget: 30
+
+# Spawned animals are flagged not to despawn when players leave, like naturally
+# generated passive animals, so top-ups genuinely repopulate an area.
+persistent-spawns: true
 
 # Never spawn closer than this many blocks to the player.
 min-spawn-distance: 24
@@ -35,6 +50,17 @@ animals:
   - PIG
   - SHEEP
   - CHICKEN
+
+# Optional per-biome species overrides. Keys are biome ids (the key path, e.g.
+# snowy_plains), values replace the animals list in that biome. An empty list
+# disables balancer spawns in that biome entirely.
+# biome-animals:
+#   snowy_plains:
+#     - SHEEP
+#   savanna:
+#     - COW
+#     - CHICKEN
+biome-animals: {}
 
 # Worlds where the balancer runs. Leave empty (the default) to run in every world.
 # To restrict it, list world names, e.g.:
