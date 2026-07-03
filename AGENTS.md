@@ -44,3 +44,7 @@ Key knobs: `cycle-seconds` (30), `scan-radius` (96), `base-target` (8), `per-add
 - main is protected. Land changes via PR; do not push to main directly or force-push.
 - Do not commit secrets and do not bypass pre-commit hooks.
 - "Wild" is a heuristic: anything not tamed, leashed, or name-tagged. There is a marked spot in the code for a claims-plugin check if strict separation is ever needed.
+
+## AI Attribution
+
+No AI attribution of any kind in commits, PRs, code, comments, or generated files. No "Co-authored-by", no "Generated with", no model names.
