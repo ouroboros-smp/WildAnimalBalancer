@@ -8,3 +8,7 @@ Claude-specific reminders:
 - No em dashes in any output. Use conventional commits (feat/fix/docs/chore/refactor).
 - All world and entity work is anchored on players and runs through each player's region thread via `Entity#getScheduler()`. Never touch an entity off its owning region (see AGENTS.md, Folia threading rules).
 - main is protected. Open a PR; never push to main directly or force-push.
+
+## AI Attribution
+
+No AI attribution of any kind in commits, PRs, code, comments, or generated files. No "Co-authored-by", no "Generated with", no model names.
