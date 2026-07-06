@@ -28,10 +28,19 @@ import java.util.function.Consumer;
  * balancer from those values, and starts it. /wildlife reload re-reads the
  * file and restarts the balancer, so you can tune spawn targets live without
  * a server restart.
+ *
+ * Monitoring: stats counters live here (not in the balancer) so they survive
+ * /wildlife reload and lifetime counters stay monotonic. /wildlife status
+ * prints them; the optional spawn log and Prometheus endpoint are started and
+ * stopped alongside the balancer.
  */
 public final class WildlifePlugin extends JavaPlugin {
 
-    private WildAnimalBalancer balancer;
+    private final BalancerStats stats = new BalancerStats();
+    // volatile: the metrics thread reads it while a reload swaps it.
+    private volatile WildAnimalBalancer balancer;
+    private SpawnLogger spawnLogger;
+    private MetricsServer metrics;
 
     @Override
     public void onEnable() {
@@ -42,13 +51,52 @@ public final class WildlifePlugin extends JavaPlugin {
 
     @Override
     public void onDisable() {
-        if (balancer != null) balancer.stop();
+        stopRuntime();
     }
 
     private void startBalancer() {
-        if (balancer != null) balancer.stop();
-        balancer = new WildAnimalBalancer(this, loadSettings());
+        stopRuntime();
+        WildAnimalBalancer.Settings cfg = loadSettings();
+        if (cfg.spawnLogFile()) {
+            spawnLogger = new SpawnLogger(getDataFolder().toPath().resolve("spawn-log.jsonl"), getLogger());
+        }
+        balancer = new WildAnimalBalancer(this, cfg, stats,
+                spawnLogger == null ? null : spawnLogger::write);
         balancer.start();
+        if (cfg.metricsEnabled()) {
+            try {
+                metrics = MetricsServer.start(cfg.metricsBind(), cfg.metricsPort(), this::renderPrometheus);
+                getLogger().info("Prometheus metrics at http://" + cfg.metricsBind() + ":" + cfg.metricsPort() + "/metrics");
+            } catch (IOException ex) {
+                getLogger().warning("Could not start metrics endpoint on " + cfg.metricsBind() + ":"
+                        + cfg.metricsPort() + " (" + ex.getMessage() + "); continuing without metrics.");
+            }
+        }
+    }
+
+    private void stopRuntime() {
+        if (balancer != null) {
+            balancer.stop();
+            balancer = null;
+        }
+        if (metrics != null) {
+            metrics.stop();
+            metrics = null;
+        }
+        if (spawnLogger != null) {
+            spawnLogger.close();
+            spawnLogger = null;
+        }
+    }
+
+    /** Scrape body for the metrics endpoint. Reads counters and map sizes only. */
+    private String renderPrometheus() {
+        return BalancerStats.prometheus(stats.snapshot(), currentGauges());
+    }
+
+    private BalancerStats.Gauges currentGauges() {
+        WildAnimalBalancer b = balancer;
+        return b == null ? new BalancerStats.Gauges(0, 0, 0) : b.gauges();
     }
 
     private WildAnimalBalancer.Settings loadSettings() {
@@ -116,6 +164,24 @@ public final class WildlifePlugin extends JavaPlugin {
             minSpawnDist = scanRadius;
         }
 
+        int statusLogCycles = c.getInt("status-log-cycles", 0);
+        if (statusLogCycles < 0) {
+            warn.accept("status-log-cycles " + statusLogCycles + " is negative, disabling the periodic summary");
+            statusLogCycles = 0;
+        }
+
+        boolean metricsEnabled = c.getBoolean("metrics.enabled", false);
+        String metricsBind = c.getString("metrics.bind", "127.0.0.1");
+        int metricsPort = c.getInt("metrics.port", 9940);
+        if (metricsEnabled && (metricsPort < 1 || metricsPort > 65535)) {
+            warn.accept("metrics.port " + metricsPort + " is not a valid port, disabling the metrics endpoint");
+            metricsEnabled = false;
+        }
+        if (metricsEnabled && isWildcardBind(metricsBind)) {
+            warn.accept("metrics.bind " + metricsBind + " listens on ALL interfaces; bind the metrics"
+                    + " endpoint to localhost or a private scrape network, not the open internet");
+        }
+
         return new WildAnimalBalancer.Settings(
                 cycleSeconds,
                 scanRadius,
@@ -133,8 +199,21 @@ public final class WildlifePlugin extends JavaPlugin {
                 biomeAnimals,
                 c.getBoolean("vanilla-biome-defaults", true),
                 vanillaBiomeAnimals,
-                worlds
+                worlds,
+                c.getBoolean("log-spawns", false),
+                c.getBoolean("spawn-log-file", false),
+                statusLogCycles,
+                metricsEnabled,
+                metricsBind,
+                metricsPort
         );
+    }
+
+    /** Binds that expose the endpoint on every interface. Static for unit testing. */
+    static boolean isWildcardBind(String bind) {
+        if (bind == null) return true;
+        String b = bind.trim();
+        return b.isEmpty() || b.equals("0.0.0.0") || b.equals("::") || b.equals("[::]") || b.equals("*");
     }
 
     /**
@@ -180,7 +259,13 @@ public final class WildlifePlugin extends JavaPlugin {
             sender.sendMessage("WildAnimalBalancer config reloaded.");
             return true;
         }
-        sender.sendMessage("Usage: /" + label + " reload");
+        if (args.length == 1 && args[0].equalsIgnoreCase("status")) {
+            for (String line : BalancerStats.statusLines(stats.snapshot(), currentGauges())) {
+                sender.sendMessage(line);
+            }
+            return true;
+        }
+        sender.sendMessage("Usage: /" + label + " <reload|status>");
         return true;
     }
 }
