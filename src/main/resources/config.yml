@@ -75,3 +75,31 @@ biome-animals: {}
 # enabled-worlds:
 #   - world
 enabled-worlds: []
+
+# ---- Monitoring ----
+# Counters are always collected (they are free); the switches below only
+# control how they are exposed. /wildlife status prints them at any time.
+
+# Log one console line per top-up: world, coordinates, biome, species, and the
+# wild count, target, streak, and remaining hourly budget that led to it.
+# Top-ups are rare by design, so this stays quiet even when enabled.
+log-spawns: false
+
+# Also append each top-up as one JSON object per line to
+# plugins/WildAnimalBalancer/spawn-log.jsonl for later analysis.
+# Written on a dedicated IO thread; never blocks a region thread.
+spawn-log-file: false
+
+# Every N cycles, log a one-line stats summary (censuses, skips, spawns,
+# guardrail blocks). 0 disables it. With 30-second cycles, 120 means one
+# summary line per hour.
+status-log-cycles: 0
+
+# Built-in Prometheus endpoint serving GET /metrics in the text format, for
+# scraping into Prometheus/Grafana. It reads only the plugin's own counters,
+# never world state. Keep the bind on localhost or a private scrape network;
+# do not expose it to the internet.
+metrics:
+  enabled: false
+  bind: 127.0.0.1
+  port: 9940

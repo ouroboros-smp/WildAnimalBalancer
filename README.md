@@ -36,6 +36,7 @@ Animals show up where people are playing, scaled to how busy the area is. Empty 
 - Biome aware. A bundled snapshot of vanilla spawn data narrows the species list per biome, so no pigs on snowy plains and only mooshrooms on mushroom fields. It only ever filters; species you did not configure are never added. Overridable per biome, or disable it entirely.
 - Configurable. Species list, targets, radius, per biome species overrides, and a per world allowlist, all in `config.yml`.
 - Live reload. Retune with a command, no restart.
+- Observable. Every decision is counted: `/wildlife status` in game, an optional per spawn audit log (console or JSONL file), an optional periodic summary line, and a built-in Prometheus endpoint for Grafana dashboards.
 
 ## How it works
 
@@ -84,6 +85,12 @@ All settings live in `config.yml`. Edit, then run `/wildlife reload` to apply wi
 | `vanilla-biome-defaults` | true | Narrow the species list per biome to what vanilla spawns there, using a bundled snapshot of vanilla Java 1.21 spawn data. Filter only, never adds species. Unknown (custom or datapack) biomes are not filtered. |
 | `biome-animals` | (empty) | Per biome species overrides. Beats the vanilla filter. An empty list for a biome disables it. |
 | `enabled-worlds` | (empty) | Worlds to run in. Empty means every world. |
+| `log-spawns` | false | Log one console line per top-up with full context. |
+| `spawn-log-file` | false | Also append each top-up as a JSON line to `plugins/WildAnimalBalancer/spawn-log.jsonl`. |
+| `status-log-cycles` | 0 | Log a one-line stats summary every N cycles. 0 disables it. |
+| `metrics.enabled` | false | Serve Prometheus metrics at `GET /metrics`. |
+| `metrics.bind` | 127.0.0.1 | Address the metrics endpoint binds to. Keep it private. |
+| `metrics.port` | 9940 | Port for the metrics endpoint. |
 
 The target for an area is `base-target + per-additional-player * (extra players)`, capped at `max-target`.
 
@@ -92,12 +99,83 @@ The target for an area is `base-target + per-additional-player * (extra players)
 | Command | Description |
 |---|---|
 | `/wildlife reload` | Reload `config.yml` and restart the balancer with the new values. |
+| `/wildlife status` | Print the monitoring counters and live cell gauges. |
 
 ## Permissions
 
 | Permission | Default | Grants |
 |---|---|---|
-| `wildlife.admin` | op | Use of `/wildlife reload`. |
+| `wildlife.admin` | op | Use of `/wildlife reload` and `/wildlife status`. |
+
+## Monitoring
+
+The balancer counts every decision it makes: censuses run and why any were skipped, shortages seen, which guardrail held a top-up back, and what actually spawned, per species and per world. Counters are always collected (they cost nothing); the config switches only control how they are exposed. They cover the server's lifetime and survive `/wildlife reload`.
+
+### In game or console
+
+- `/wildlife status` prints everything at any time: census results, the shortage funnel, spawn totals by species and world, and how many areas are active, building a deficit streak, or out of hourly budget.
+- `status-log-cycles: 120` writes a one-line summary to the server log every 120 cycles (hourly at the default cycle length), so whatever already ships your logs picks it up.
+
+### Spawn audit log
+
+- `log-spawns: true` logs one console line per top-up: world, coordinates, biome, species, the wild count against the target, the streak that triggered it, and the hourly budget left. Top-ups are rare by design, so this stays quiet.
+- `spawn-log-file: true` appends the same events to `plugins/WildAnimalBalancer/spawn-log.jsonl`, one JSON object per line, written on a dedicated IO thread. Handy with `jq`:
+
+```sh
+# spawns per species
+jq -r '.species' spawn-log.jsonl | sort | uniq -c | sort -rn
+# what an area received, when
+jq -r 'select(.world == "world") | [.time, .x, .z, .species, .spawned] | @tsv' spawn-log.jsonl
+```
+
+### Prometheus and Grafana
+
+The plugin can serve Prometheus's text format itself, no exporter plugin needed:
+
+```yaml
+metrics:
+  enabled: true
+  bind: 127.0.0.1
+  port: 9940
+```
+
+```yaml
+# prometheus.yml
+scrape_configs:
+  - job_name: wildanimalbalancer
+    static_configs:
+      - targets: ["127.0.0.1:9940"]
+```
+
+Exported series:
+
+| Metric | Type | Meaning |
+|---|---|---|
+| `wildlife_census_total{result}` | counter | Censuses by outcome: `run`, `skipped_region_boundary`, `skipped_shared_cell`, `skipped_disabled_world`, `failed`. |
+| `wildlife_deficit_cycles_total` | counter | Censused cycles that found an area short. |
+| `wildlife_topup_blocked_total{reason}` | counter | Top-ups withheld: `deficit_streak`, `hourly_budget`, `no_spawn_spot`, `empty_biome_pool`. |
+| `wildlife_spawn_groups_total` | counter | Herd top-ups performed. |
+| `wildlife_spawned_animals_total` | counter | Animals spawned. |
+| `wildlife_spawned_species_total{species}` | counter | Animals spawned, by species. |
+| `wildlife_spawned_world_total{world}` | counter | Animals spawned, by world. |
+| `wildlife_cells_active` | gauge | Areas censused within the last few cycles. |
+| `wildlife_cells_on_deficit_streak` | gauge | Areas currently building a shortage streak. |
+| `wildlife_cells_budget_spent` | gauge | Areas whose hourly spawn budget is fully spent. |
+
+Queries worth graphing or alerting on:
+
+- `rate(wildlife_spawned_animals_total[1h])`: the meat faucet dial. If this trends up over weeks while player count does not, revisit `deficit-cycles` and `cell-hourly-budget` (they are economy levers).
+- `increase(wildlife_census_total{result="skipped_region_boundary"}[1h])`: on Folia, a persistently high value means players are living near region borders and rarely get censused; their areas will feel empty even though the plugin is healthy.
+- `increase(wildlife_topup_blocked_total{reason="no_spawn_spot"}[1h])`: rising means the terrain keeps rejecting spawns (no grass, low sky light), so shortages will not fill where players actually are.
+- `increase(wildlife_census_total{result="failed"}[10m]) > 0`: should be zero; anything else is a bug worth reporting.
+
+The endpoint reads only the plugin's own counters, never world or entity state, so scraping cannot affect a tick. Still, keep the bind on localhost or a private scrape network.
+
+### What to watch in the server log
+
+- `WARNING ... census failed for <player>`: the ownership pre-check should make this impossible, so a repeating warning means a real bug is being skipped. It is rate limited to once per cycle.
+- Any Folia `ERROR` mentioning "accessing entity state off owning region": should never appear; the plugin skips region boundaries instead of forcing them.
+- If you want to confirm the census cost stays negligible on region threads, profile with [spark](https://spark.lucko.me/) (`/spark profiler`) during peak hours; the balancer's work shows up under the plugin's scheduled tasks.
 
 ## Tuning tips
 

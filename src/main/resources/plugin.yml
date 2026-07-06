@@ -7,7 +7,7 @@ author: Ronald Johnson
 commands:
   wildlife:
     description: WildAnimalBalancer admin commands
-    usage: /wildlife reload
+    usage: /wildlife <reload|status>
 permissions:
   wildlife.admin:
     description: Manage WildAnimalBalancer

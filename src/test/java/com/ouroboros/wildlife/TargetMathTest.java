@@ -21,7 +21,8 @@ class TargetMathTest {
         return new WildAnimalBalancer.Settings(
                 30L, 96, base, perPlayer, max, maxPerCycle, 24, 20, 7,
                 3, 30, true,
-                List.of(EntityType.COW), Map.of(), true, Map.of(), Set.of());
+                List.of(EntityType.COW), Map.of(), true, Map.of(), Set.of(),
+                false, false, 0, false, "127.0.0.1", 9940);
     }
 
     private static WildAnimalBalancer.Settings pools(List<EntityType> animals,
@@ -30,7 +31,8 @@ class TargetMathTest {
                                                      Map<String, List<EntityType>> vanilla) {
         return new WildAnimalBalancer.Settings(
                 30L, 96, 8, 4, 40, 6, 24, 20, 7, 3, 30, true,
-                animals, overrides, vanillaDefaults, vanilla, Set.of());
+                animals, overrides, vanillaDefaults, vanilla, Set.of(),
+                false, false, 0, false, "127.0.0.1", 9940);
     }
 
     @Test

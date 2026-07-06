@@ -25,6 +25,7 @@ import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.Consumer;
 import java.util.logging.Level;
 
 /**
@@ -74,7 +75,13 @@ public final class WildAnimalBalancer {
             Map<String, List<EntityType>> biomeAnimals,
             boolean vanillaBiomeDefaults,
             Map<String, List<EntityType>> vanillaBiomeAnimals,
-            Set<String> enabledWorlds
+            Set<String> enabledWorlds,
+            boolean logSpawns,
+            boolean spawnLogFile,
+            int statusLogCycles,
+            boolean metricsEnabled,
+            String metricsBind,
+            int metricsPort
     ) {}
 
     /** Blocks of scatter around the group anchor so a top-up reads as a herd. */
@@ -83,6 +90,10 @@ public final class WildAnimalBalancer {
 
     private final Plugin plugin;
     private final Settings cfg;
+    private final BalancerStats stats;
+    // JSONL audit sink, null when spawn-log-file is off. Accepts a prebuilt line
+    // and must never block (SpawnLogger hands writes to its own IO thread).
+    private final Consumer<String> spawnLogSink;
     private final Random rng = new Random();
 
     // All three maps are keyed by the per-world ~128-block cell (see cellKey).
@@ -100,15 +111,20 @@ public final class WildAnimalBalancer {
     private record CellStreak(int cycle, int streak) {}
     private record CellBudget(long windowStart, int spawned) {}
 
-    public WildAnimalBalancer(Plugin plugin, Settings cfg) {
+    public WildAnimalBalancer(Plugin plugin, Settings cfg, BalancerStats stats, Consumer<String> spawnLogSink) {
         this.plugin = plugin;
         this.cfg = cfg;
+        this.stats = stats;
+        this.spawnLogSink = spawnLogSink;
     }
 
     public void start() {
         // Async driver: no world access here, just dispatch each player to its own region thread.
         driver = Bukkit.getAsyncScheduler().runAtFixedRate(plugin, t -> {
             int c = cycle.incrementAndGet();
+            if (cfg.statusLogCycles() > 0 && c % cfg.statusLogCycles() == 0) {
+                plugin.getLogger().info(BalancerStats.summaryLine(stats.snapshot(), gauges()));
+            }
             handled.values().removeIf(v -> v < c - 2); // prune stale cells
             deficits.values().removeIf(v -> v.cycle() < c - 2);
             long cutoff = System.currentTimeMillis() - BUDGET_WINDOW_MILLIS;
@@ -197,6 +213,7 @@ public final class WildAnimalBalancer {
         try {
             runCensus(player, currentCycle);
         } catch (Exception e) {
+            stats.censusFailed();
             if (lastWarnedCycle.getAndSet(currentCycle) != currentCycle) {
                 plugin.getLogger().log(Level.WARNING, "census failed for " + player.getName(), e);
             }
@@ -208,7 +225,10 @@ public final class WildAnimalBalancer {
         Location at = player.getLocation();
         World world = at.getWorld();
         if (world == null) return;
-        if (!cfg.enabledWorlds().isEmpty() && !cfg.enabledWorlds().contains(world.getName())) return;
+        if (!cfg.enabledWorlds().isEmpty() && !cfg.enabledWorlds().contains(world.getName())) {
+            stats.skippedDisabledWorld();
+            return;
+        }
 
         // Folia requires the current region to own EVERY chunk the census box
         // touches, and its thread check logs at ERROR before throwing, so this
@@ -217,14 +237,21 @@ public final class WildAnimalBalancer {
         // runs BEFORE the cell claim so a skipped player neither blocks the cell
         // for co-located players nor resets the deficit streak. On Paper the
         // check is always true on the main thread.
-        if (!Bukkit.isOwnedByCurrentRegion(at, scanChunkRadius(cfg.scanRadius()))) return;
+        if (!Bukkit.isOwnedByCurrentRegion(at, scanChunkRadius(cfg.scanRadius()))) {
+            stats.skippedRegionBoundary();
+            return;
+        }
 
         // Dedupe: first player to claim this ~128-block cell this cycle proceeds, others bail.
         // Keyed per world so same-coordinate players in different worlds never collide.
         // ConcurrentHashMap.put returns the previous value atomically, so exactly one wins.
         String cell = cellKey(world.getUID(), at.getBlockX(), at.getBlockZ());
         Integer was = handled.put(cell, currentCycle);
-        if (was != null && was == currentCycle) return;
+        if (was != null && was == currentCycle) {
+            stats.skippedSharedCell();
+            return;
+        }
+        stats.censusRan();
 
         int wild = 0;
         int localPlayers = 1; // the anchor player (getNearbyEntities does not include self)
@@ -246,7 +273,12 @@ public final class WildAnimalBalancer {
         int streak = nextDeficitStreak(prev == null ? 0 : prev.streak(),
                 prev != null && prev.cycle() == currentCycle - 1, deficit > 0);
         deficits.put(cell, new CellStreak(currentCycle, streak));
-        if (deficit <= 0 || streak < cfg.deficitCycles()) return;
+        if (deficit <= 0) return;
+        stats.deficitObserved();
+        if (streak < cfg.deficitCycles()) {
+            stats.blockedByStreak();
+            return;
+        }
 
         // Guardrail: hourly per-cell budget. Camping a field and re-killing it
         // stops paying out once the window is spent.
@@ -254,10 +286,51 @@ public final class WildAnimalBalancer {
         CellBudget budget = budgets.get(cell);
         if (budget == null || now - budget.windowStart() >= BUDGET_WINDOW_MILLIS) budget = new CellBudget(now, 0);
         int toSpawn = budgetedSpawns(cfg, deficit, budget.spawned());
-        if (toSpawn <= 0) return;
+        if (toSpawn <= 0) {
+            stats.blockedByBudget();
+            return;
+        }
 
-        int spawned = spawnGroup(at, toSpawn);
-        if (spawned > 0) budgets.put(cell, new CellBudget(budget.windowStart(), budget.spawned() + spawned));
+        SpawnOutcome out = spawnGroup(at, toSpawn);
+        if (out == null || out.spawned() <= 0) return; // spawnGroup already counted the failure
+        int spentNow = budget.spawned() + out.spawned();
+        budgets.put(cell, new CellBudget(budget.windowStart(), spentNow));
+
+        String species = out.species().name().toLowerCase(Locale.ROOT);
+        stats.spawned(world.getName(), species, out.spawned());
+        int budgetLeft = Math.max(0, cfg.cellHourlyBudget() - spentNow);
+        if (cfg.logSpawns()) {
+            plugin.getLogger().info("Topped up " + world.getName()
+                    + " (" + out.anchor().getBlockX() + ", " + out.anchor().getBlockY() + ", " + out.anchor().getBlockZ() + ")"
+                    + " biome " + out.biome() + ": +" + out.spawned() + " " + species
+                    + ", wild " + wild + "/" + target
+                    + ", players " + localPlayers
+                    + ", streak " + streak
+                    + ", hourly budget left " + budgetLeft);
+        }
+        if (spawnLogSink != null) {
+            spawnLogSink.accept(SpawnLogger.json(now, world.getName(), cell, out.biome(), species,
+                    out.spawned(), wild, target, localPlayers, streak, budgetLeft,
+                    out.anchor().getBlockX(), out.anchor().getBlockY(), out.anchor().getBlockZ()));
+        }
+    }
+
+    /**
+     * Live sizes of the guardrail maps, for /wildlife status, the periodic
+     * summary, and the metrics endpoint. Reads only concurrent maps, so it is
+     * safe to call from any thread; it never touches world state.
+     */
+    BalancerStats.Gauges gauges() {
+        int onStreak = 0;
+        for (CellStreak s : deficits.values()) {
+            if (s.streak() > 0) onStreak++;
+        }
+        long cutoff = System.currentTimeMillis() - BUDGET_WINDOW_MILLIS;
+        int budgetSpent = 0;
+        for (CellBudget b : budgets.values()) {
+            if (b.windowStart() >= cutoff && b.spawned() >= cfg.cellHourlyBudget()) budgetSpent++;
+        }
+        return new BalancerStats.Gauges(handled.size(), onStreak, budgetSpent);
     }
 
     /**
@@ -291,19 +364,29 @@ public final class WildAnimalBalancer {
         return true;
     }
 
+    /** What a top-up actually did, so the caller can count and log it with full context. */
+    private record SpawnOutcome(int spawned, EntityType species, String biome, Location anchor) {}
+
     /**
      * Spawns one same-species group around a single anchor spot, like a worldgen
      * herd, instead of scattering singles across the whole ring. The species is
      * drawn from the biome override for the anchor's biome when one is configured.
-     * Returns how many animals actually spawned.
+     * Returns what spawned, or null when no valid spot or species pool exists
+     * (counted here, since only this method knows which one failed).
      */
-    private int spawnGroup(Location center, int count) {
+    private SpawnOutcome spawnGroup(Location center, int count) {
         World w = center.getWorld();
         Location anchor = findSpawnSpot(center);
-        if (anchor == null) return 0;
+        if (anchor == null) {
+            stats.noSpawnSpot();
+            return null;
+        }
         String biome = anchor.getBlock().getBiome().getKey().getKey().toLowerCase(Locale.ROOT);
         List<EntityType> pool = poolFor(cfg, biome);
-        if (pool.isEmpty()) return 0; // biome explicitly mapped to no spawns
+        if (pool.isEmpty()) { // biome explicitly mapped to no spawns
+            stats.emptyBiomePool();
+            return null;
+        }
 
         EntityType type = pool.get(rng.nextInt(pool.size()));
         int spawned = 0;
@@ -315,7 +398,7 @@ public final class WildAnimalBalancer {
             if (cfg.persistentSpawns() && e instanceof LivingEntity le) le.setRemoveWhenFarAway(false);
             spawned++;
         }
-        return spawned;
+        return new SpawnOutcome(spawned, type, biome, anchor);
     }
 
     /** Find a sensible surface spot near the player, on a loaded chunk this region owns. */

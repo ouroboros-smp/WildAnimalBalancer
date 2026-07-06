@@ -52,7 +52,41 @@ class ConfigParsingTest {
         assertEquals(4, s.animals().size()); // COW, PIG, SHEEP, CHICKEN
         assertTrue(s.biomeAnimals().isEmpty());
         assertTrue(s.enabledWorlds().isEmpty());
+        // monitoring defaults: counters always on, every output channel off
+        assertFalse(s.logSpawns());
+        assertFalse(s.spawnLogFile());
+        assertEquals(0, s.statusLogCycles());
+        assertFalse(s.metricsEnabled());
+        assertEquals("127.0.0.1", s.metricsBind());
+        assertEquals(9940, s.metricsPort());
         assertTrue(warnings.isEmpty(), "shipped config should produce no unknown-animal warnings");
+    }
+
+    @Test
+    void invalidMetricsPortDisablesMetricsWithWarning() {
+        YamlConfiguration c = new YamlConfiguration();
+        c.set("metrics.enabled", true);
+        c.set("metrics.port", 70000);
+
+        List<String> warnings = new ArrayList<>();
+        WildAnimalBalancer.Settings s = WildlifePlugin.parseSettings(c, Map.of(), warnings::add);
+
+        assertFalse(s.metricsEnabled(), "an unusable port must disable the endpoint, not crash the enable");
+        assertEquals(1, warnings.size());
+        assertTrue(warnings.get(0).contains("metrics.port"), warnings.toString());
+    }
+
+    @Test
+    void negativeStatusLogCyclesIsClampedWithWarning() {
+        YamlConfiguration c = new YamlConfiguration();
+        c.set("status-log-cycles", -5);
+
+        List<String> warnings = new ArrayList<>();
+        WildAnimalBalancer.Settings s = WildlifePlugin.parseSettings(c, Map.of(), warnings::add);
+
+        assertEquals(0, s.statusLogCycles(), "Settings must report the true effective value");
+        assertEquals(1, warnings.size());
+        assertTrue(warnings.get(0).contains("status-log-cycles"), warnings.toString());
     }
 
     @Test
