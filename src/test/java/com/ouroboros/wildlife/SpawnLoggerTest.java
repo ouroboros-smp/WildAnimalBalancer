@@ -56,4 +56,17 @@ class SpawnLoggerTest {
         List<String> lines = Files.readAllLines(file, StandardCharsets.UTF_8);
         assertEquals(List.of("{\"a\":1}", "{\"b\":2}"), lines);
     }
+
+    @Test
+    void writeAfterCloseIsDroppedWithoutThrowing(@TempDir Path dir) throws Exception {
+        Path file = dir.resolve("spawn-log.jsonl");
+        SpawnLogger logger = new SpawnLogger(file, Logger.getLogger("test"));
+        logger.write("{\"a\":1}");
+        logger.close();
+        // reload race: an in-flight region task can still hold the old sink after
+        // stopRuntime closed it; the write must be dropped, never thrown
+        logger.write("{\"late\":true}");
+
+        assertEquals(List.of("{\"a\":1}"), Files.readAllLines(file, StandardCharsets.UTF_8));
+    }
 }

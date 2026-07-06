@@ -177,6 +177,10 @@ public final class WildlifePlugin extends JavaPlugin {
             warn.accept("metrics.port " + metricsPort + " is not a valid port, disabling the metrics endpoint");
             metricsEnabled = false;
         }
+        if (metricsEnabled && isWildcardBind(metricsBind)) {
+            warn.accept("metrics.bind " + metricsBind + " listens on ALL interfaces; bind the metrics"
+                    + " endpoint to localhost or a private scrape network, not the open internet");
+        }
 
         return new WildAnimalBalancer.Settings(
                 cycleSeconds,
@@ -203,6 +207,13 @@ public final class WildlifePlugin extends JavaPlugin {
                 metricsBind,
                 metricsPort
         );
+    }
+
+    /** Binds that expose the endpoint on every interface. Static for unit testing. */
+    static boolean isWildcardBind(String bind) {
+        if (bind == null) return true;
+        String b = bind.trim();
+        return b.isEmpty() || b.equals("0.0.0.0") || b.equals("::") || b.equals("[::]") || b.equals("*");
     }
 
     /**

@@ -8,6 +8,7 @@ import java.nio.file.StandardOpenOption;
 import java.time.Instant;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.logging.Level;
@@ -40,19 +41,25 @@ final class SpawnLogger implements AutoCloseable {
 
     /** Queue one JSON line for append. Safe to call from any region thread. */
     void write(String jsonLine) {
-        io.execute(() -> {
-            try {
-                Path parent = file.getParent();
-                if (parent != null) Files.createDirectories(parent);
-                Files.writeString(file, jsonLine + "\n", StandardCharsets.UTF_8,
-                        StandardOpenOption.CREATE, StandardOpenOption.APPEND);
-            } catch (IOException ex) {
-                if (warned.compareAndSet(false, true)) {
-                    log.log(Level.WARNING, "Could not write spawn log " + file
-                            + "; further write failures will not be reported.", ex);
+        try {
+            io.execute(() -> {
+                try {
+                    Path parent = file.getParent();
+                    if (parent != null) Files.createDirectories(parent);
+                    Files.writeString(file, jsonLine + "\n", StandardCharsets.UTF_8,
+                            StandardOpenOption.CREATE, StandardOpenOption.APPEND);
+                } catch (IOException ex) {
+                    if (warned.compareAndSet(false, true)) {
+                        log.log(Level.WARNING, "Could not write spawn log " + file
+                                + "; further write failures will not be reported.", ex);
+                    }
                 }
-            }
-        });
+            });
+        } catch (RejectedExecutionException ex) {
+            // Closed mid-reload while an in-flight region task still held the old
+            // sink. Drop the entry: the balancer that produced it is already
+            // stopped, and logging must never throw on a region thread.
+        }
     }
 
     @Override

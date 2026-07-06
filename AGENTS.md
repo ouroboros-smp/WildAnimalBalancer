@@ -24,7 +24,7 @@ A Minecraft server plugin (Folia-native, Paper-compatible) for Ouroboros SMP tha
 - `com.ouroboros.wildlife.BalancerStats`: lock-free monitoring counters (LongAdder), owned by the plugin so they survive reload; renders /wildlife status lines, the periodic summary, and the Prometheus text format. Pure JDK.
 - `com.ouroboros.wildlife.SpawnLogger`: optional JSONL spawn audit log, appended on a dedicated IO thread so region threads never block on disk. Pure JDK.
 - `com.ouroboros.wildlife.MetricsServer`: optional built-in Prometheus endpoint (JDK HttpServer, one daemon thread). The scrape supplier reads counters and map sizes only, NEVER world state. Pure JDK.
-- Tests: ConfigParsingTest, TargetMathTest, WildAnimalPredicateTest, BalancerStatsTest, SpawnLoggerTest.
+- Tests: ConfigParsingTest, TargetMathTest, WildAnimalPredicateTest, BalancerStatsTest, SpawnLoggerTest, CensusOutcomeTest.
 
 ## Folia threading rules (do not violate)
 - The plugin anchors all work on players. A lightweight async task walks the online player list each cycle and hands each player off to their own region thread via `Entity#getScheduler()`.

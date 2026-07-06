@@ -77,6 +77,25 @@ class ConfigParsingTest {
     }
 
     @Test
+    void wildcardMetricsBindWarnsButStaysEnabled() {
+        YamlConfiguration c = new YamlConfiguration();
+        c.set("metrics.enabled", true);
+        c.set("metrics.bind", "0.0.0.0");
+
+        List<String> warnings = new ArrayList<>();
+        WildAnimalBalancer.Settings s = WildlifePlugin.parseSettings(c, Map.of(), warnings::add);
+
+        assertTrue(s.metricsEnabled(), "wildcard bind is legal (private scrape networks), it just warns");
+        assertEquals(1, warnings.size());
+        assertTrue(warnings.get(0).contains("metrics.bind"), warnings.toString());
+
+        // the localhost default stays quiet
+        assertFalse(WildlifePlugin.isWildcardBind("127.0.0.1"));
+        assertTrue(WildlifePlugin.isWildcardBind("::"));
+        assertTrue(WildlifePlugin.isWildcardBind(" "));
+    }
+
+    @Test
     void negativeStatusLogCyclesIsClampedWithWarning() {
         YamlConfiguration c = new YamlConfiguration();
         c.set("status-log-cycles", -5);

@@ -38,8 +38,14 @@ final class MetricsServer {
                     exchange.sendResponseHeaders(405, -1);
                     return;
                 }
+                // createContext matches by prefix, so /metrics/anything lands here too
+                if (!"/metrics".equals(exchange.getRequestURI().getPath())) {
+                    exchange.sendResponseHeaders(404, -1);
+                    return;
+                }
                 byte[] body = scrape.get().getBytes(StandardCharsets.UTF_8);
                 exchange.getResponseHeaders().set("Content-Type", "text/plain; version=0.0.4; charset=utf-8");
+                exchange.getResponseHeaders().set("Cache-Control", "no-cache");
                 exchange.sendResponseHeaders(200, body.length);
                 try (OutputStream out = exchange.getResponseBody()) {
                     out.write(body);
