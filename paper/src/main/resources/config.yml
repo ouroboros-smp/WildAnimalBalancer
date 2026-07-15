@@ -1,0 +1,106 @@
+# WildAnimalBalancer config.
+# Edit anything here and run /wildlife reload to apply it without restarting.
+
+# How often (in seconds) each player's surroundings are checked and topped up.
+cycle-seconds: 30
+
+# Blocks around a player to census wild animals and to spawn within.
+scan-radius: 96
+
+# Wild animals wanted in an area with a single player.
+base-target: 8
+
+# Extra wanted per additional player sharing that area.
+per-additional-player: 4
+
+# Hard ceiling per area no matter how many players are present.
+max-target: 40
+
+# Most animals spawned per area per cycle. Keeps top-ups gradual instead of bursty.
+# Raising it fills shortages faster, but cell-hourly-budget still caps the hourly total.
+max-per-cycle: 6
+
+# Consecutive cycles an area must stay short before any top-up happens. With
+# 30-second cycles the default means a shortage must persist for about 90
+# seconds. A just-slaughtered herd does not refill on the spot, and players
+# passing through an area trigger nothing.
+deficit-cycles: 3
+
+# Most animals spawned per ~128-block area per hour. This is the anti-farm
+# guardrail: camping a field and killing everything on repeat cannot produce
+# more than this per hour, no matter how fast the area is emptied.
+cell-hourly-budget: 30
+
+# Spawned animals are flagged not to despawn when players leave, like naturally
+# generated passive animals, so top-ups genuinely repopulate an area.
+persistent-spawns: true
+
+# Never spawn closer than this many blocks to the player.
+min-spawn-distance: 24
+
+# Location attempts per animal before giving up on finding a spot.
+spawn-tries: 20
+
+# Minimum sky light at the spawn block. Keeps spawns out of caves and deep shade.
+min-sky-light: 7
+
+# Animals the balancer will spawn. Use canonical entity ids. Legacy Bukkit
+# names such as COW are also accepted and normalize to minecraft:cow.
+animals:
+  - minecraft:cow
+  - minecraft:pig
+  - minecraft:sheep
+  - minecraft:chicken
+
+# Keep spawns biome-appropriate using a bundled snapshot of vanilla spawn data:
+# the animals list above is narrowed per biome to what vanilla naturally spawns
+# there (so no pigs on snowy plains). It only ever filters, it never adds
+# species you did not list. Biomes unknown to the snapshot (custom or datapack
+# biomes) are not filtered. Set false to spawn the full list everywhere.
+vanilla-biome-defaults: true
+
+# Optional per-biome species overrides. Keys are biome ids (the key path, e.g.
+# snowy_plains), values replace the animals list in that biome, ignoring the
+# vanilla filter above. An empty list disables balancer spawns in that biome
+# entirely.
+# biome-animals:
+#   snowy_plains:
+#     - minecraft:sheep
+#   savanna:
+#     - minecraft:cow
+#     - minecraft:chicken
+biome-animals: {}
+
+# Worlds where the balancer runs. Leave empty (the default) to run in every world.
+# To restrict it, list world names, e.g.:
+# enabled-worlds:
+#   - world
+enabled-worlds: []
+
+# ---- Monitoring ----
+# Counters are always collected (they are free); the switches below only
+# control how they are exposed. /wildlife status prints them at any time.
+
+# Log one console line per top-up: world, coordinates, biome, species, and the
+# wild count, target, streak, and remaining hourly budget that led to it.
+# Top-ups are rare by design, so this stays quiet even when enabled.
+log-spawns: false
+
+# Also append each top-up as one JSON object per line to
+# plugins/WildAnimalBalancer/spawn-log.jsonl for later analysis.
+# Written on a dedicated IO thread; never blocks a region thread.
+spawn-log-file: false
+
+# Every N cycles, log a one-line stats summary (censuses, skips, spawns,
+# guardrail blocks). 0 disables it. With 30-second cycles, 120 means one
+# summary line per hour.
+status-log-cycles: 0
+
+# Built-in Prometheus endpoint serving GET /metrics in the text format, for
+# scraping into Prometheus/Grafana. It reads only the plugin's own counters,
+# never world state. Keep the bind on localhost or a private scrape network;
+# do not expose it to the internet.
+metrics:
+  enabled: false
+  bind: 127.0.0.1
+  port: 9940

@@ -1,6 +1,6 @@
 name: Release
 
-# Push a tag like v1.0.0 to build and publish a release.
+# Push a tag like v2.0.0 to build and publish a release.
 on:
   push:
     tags:
@@ -17,32 +17,33 @@ jobs:
       - uses: actions/setup-java@v5
         with:
           distribution: temurin
-          java-version: '21'
+          java-version: '25'
       - uses: gradle/actions/setup-gradle@v6
       - name: Build
         run: ./gradlew build
-      - name: Publish to GitHub Release and Modrinth
-        uses: Kir-Antipov/mc-publish@v3.3
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@v3
         with:
-          # Your Modrinth project ID or slug. Not secret, safe to keep here.
-          modrinth-id: YOUR_MODRINTH_PROJECT_ID
+          generate_release_notes: true
+          files: |
+            paper/build/libs/WildAnimalBalancer-paper-2.0.0.jar
+            fabric/build/libs/WildAnimalBalancer-fabric-2.0.0.jar
+            fabric-hud/build/libs/WildAnimalBalancer-fabric-hud-2.0.0.jar
+      - name: Publish Paper to Modrinth
+        if: vars.MODRINTH_PROJECT_ID != ''
+        uses: Kira-NT/mc-publish@v3.3
+        with:
+          modrinth-id: ${{ vars.MODRINTH_PROJECT_ID }}
           modrinth-token: ${{ secrets.MODRINTH_TOKEN }}
-
-          # GITHUB_TOKEN is provided automatically. This also creates the GitHub Release.
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-
-          # Grabs the built plugin jar, skipping any -sources / -javadoc / -dev jars.
-          files: build/libs/!(*-@(dev|sources|javadoc)).jar
-
-          # mc-publish derives the version and name from the pushed tag.
+          files: paper/build/libs/WildAnimalBalancer-paper-2.0.0.jar
+          modrinth-name: WildAnimalBalancer ${{ github.ref_name }} (Paper/Folia)
+          modrinth-version: ${{ github.ref_name }}-paper
           version-type: release
-
+          environment: server
           loaders: |
             paper
             folia
             purpur
-
-          # List every Minecraft version you have actually tested against. Trim or extend.
           game-versions: |
             1.21
             1.21.1
@@ -55,3 +56,17 @@ jobs:
             1.21.8
             1.21.9
             1.21.11
+      - name: Publish Fabric server mod
+        if: vars.MODRINTH_PROJECT_ID != ''
+        uses: Kira-NT/mc-publish@v3.3
+        with:
+          modrinth-id: ${{ vars.MODRINTH_PROJECT_ID }}
+          modrinth-token: ${{ secrets.MODRINTH_TOKEN }}
+          files: fabric/build/libs/WildAnimalBalancer-fabric-2.0.0.jar
+          name: WildAnimalBalancer ${{ github.ref_name }} (Fabric)
+          version: ${{ github.ref_name }}-fabric
+          version-type: release
+          loaders: fabric
+          game-versions: '26.2'
+          environment: client? | server
+          dependencies: 'fabric-api(required){modrinth:P7dR8mSH}'

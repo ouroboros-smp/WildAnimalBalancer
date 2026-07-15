@@ -16,13 +16,16 @@ jobs:
       - uses: actions/setup-java@v5
         with:
           distribution: temurin
-          java-version: '21'
+          java-version: '25'
       - uses: gradle/actions/setup-gradle@v6
       - name: Build
         run: ./gradlew build
-      - name: Upload jar
+      - name: Upload distributable jars
         uses: actions/upload-artifact@v4
         with:
           name: WildAnimalBalancer
-          path: build/libs/*.jar
+          path: |
+            paper/build/libs/WildAnimalBalancer-paper-2.0.0.jar
+            fabric/build/libs/WildAnimalBalancer-fabric-2.0.0.jar
+            fabric-hud/build/libs/WildAnimalBalancer-fabric-hud-2.0.0.jar
           if-no-files-found: error

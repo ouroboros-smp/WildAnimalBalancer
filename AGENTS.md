@@ -1,55 +1,105 @@
 # AGENTS.md - WildAnimalBalancer
 
-Agent-facing guide for this repo. The human overview is in README.md; the design rationale is in CONTEXT.md. Read all three before changing code.
+Agent-facing guide for this repository. The human overview is in README.md; the design rationale is in CONTEXT.md. Read all three before changing code.
 
 ## What this is
-A Minecraft server plugin (Folia-native, Paper-compatible) for Ouroboros SMP that keeps wild animals available where players actually are. It watches the area around each online player and tops up wild animals when that area falls below a demand-scaled target.
+
+WildAnimalBalancer keeps wild passive animals available near online players. Version 2 is a Gradle multi-module project with one shared behavioral core, a Paper/Folia server plugin, a Fabric server mod, and an optional Fabric client HUD.
 
 ## Stack and targets
-- Language: Java 21 (toolchain pinned in build.gradle.kts). Do not raise the compile target above 21.
-- Server API: `io.papermc.paper:paper-api:1.21.11-R0.1-SNAPSHOT`, compileOnly. The Folia schedulers are part of paper-api, so this one dependency covers Paper and Folia across 1.21.x. No libraries to shade.
-- Build: Gradle (Kotlin DSL), wrapper 8.14.2, `xyz.jpenilla.run-paper` for local runs.
-- Manifest: src/main/resources/plugin.yml (`folia-supported: true`, `api-version: '1.21'`).
-- group `com.ouroboros`, version 1.0.0. Public repo.
 
-## Build, test, run
-- Build + unit tests: `./gradlew build` (jar lands at build/libs/WildAnimalBalancer-1.0.0.jar).
-- Unit tests only: `./gradlew test` (JUnit 5 + Mockito).
-- Local server: `./gradlew runServer` (downloads Paper 1.21.11).
-- On Windows use `.\gradlew.bat`. After regenerating the wrapper, run `git update-index --chmod=+x gradlew` or CI fails on a non-executable wrapper.
+- Gradle wrapper: 9.5.1, Kotlin DSL.
+- Group and version: `com.ouroboros`, `2.0.0`.
+- `core`: Java 21, platform-neutral logic and monitoring.
+- `paper`: Java 21, Paper API 1.21.11, Folia-native and Paper-compatible.
+- `fabric`: Java 25, Minecraft 26.2, Fabric Loader 0.19.3, Fabric API 0.154.2+26.2, Loom 1.17.14.
+- `fabric-hud`: Java 25, Minecraft 26.2, optional client-only admin HUD.
+- Paper and Fabric produce separate server artifacts. Never put both on the same server.
+- Do not raise the Paper or core compile target above Java 21. Fabric 26.2 requires Java 25.
 
-## Layout
-- `com.ouroboros.wildlife.WildlifePlugin`: JavaPlugin entry. Loads config, registers `/wildlife` (reload, status), starts and stops the balancer, spawn logger, and metrics endpoint.
-- `com.ouroboros.wildlife.WildAnimalBalancer`: the cycle engine. Counts, targets, and spawns.
-- `com.ouroboros.wildlife.BalancerStats`: lock-free monitoring counters (LongAdder), owned by the plugin so they survive reload; renders /wildlife status lines, the periodic summary, and the Prometheus text format. Pure JDK.
-- `com.ouroboros.wildlife.SpawnLogger`: optional JSONL spawn audit log, appended on a dedicated IO thread so region threads never block on disk. Pure JDK.
-- `com.ouroboros.wildlife.MetricsServer`: optional built-in Prometheus endpoint (JDK HttpServer, one daemon thread). The scrape supplier reads counters and map sizes only, NEVER world state. Pure JDK.
-- Tests: ConfigParsingTest, TargetMathTest, WildAnimalPredicateTest, BalancerStatsTest, SpawnLoggerTest, CensusOutcomeTest.
+## Build, test, and run
 
-## Folia threading rules (do not violate)
-- The plugin anchors all work on players. A lightweight async task walks the online player list each cycle and hands each player off to their own region thread via `Entity#getScheduler()`.
-- Everything that touches the world (counting nearby animals, checking blocks, spawning) happens on the player's owning region thread. Never read or spawn an entity from a thread that does not own it.
-- Folia requires the current region to own every chunk an entity query touches, and it logs at ERROR before throwing, so boundary handling cannot be a catch. The census pre-checks ownership of the whole scan box (`Bukkit.isOwnedByCurrentRegion(location, chunkRadius)`) and skips that player's census for the cycle when the box crosses a region boundary: skipped, never forced, and the log never shows "accessing entity state off owning region". Spawn-spot chunks are re-checked individually before block reads.
-- Overlapping player areas are deduped each cycle by a coarse per-world ~128-block cell claim, made only after the ownership pre-check passes so a skipped boundary player never blocks the cell or resets streaks. One census runs per cell per cycle; the target scales with the players found in the anchor player's scan box.
-- On Paper these scheduler calls route to the single main thread, so the same jar behaves identically with no separate build.
+On Windows, use `gradlew.bat`. On Unix-like systems, use `./gradlew`.
 
-## Config (src/main/resources/config.yml, live reload via /wildlife reload)
-Key knobs: `cycle-seconds` (30), `scan-radius` (96), `base-target` (8), `per-additional-player` (4), `max-target` (40), `max-per-cycle` (6), `deficit-cycles` (3, consecutive short cycles required before a top-up), `cell-hourly-budget` (30, most spawns per ~128-block area per hour), `persistent-spawns` (true, spawned animals do not despawn when players leave), `min-spawn-distance` (24), `spawn-tries` (20), `min-sky-light` (7), `animals` (COW, PIG, SHEEP, CHICKEN as Bukkit EntityType names), `vanilla-biome-defaults` (true, narrows the animals list per biome using the bundled src/main/resources/vanilla-biome-animals.yml snapshot of vanilla Java 1.21 spawn data; filter only, never adds species, unknown biomes unfiltered), `biome-animals` (empty, explicit per-biome species overrides that beat the vanilla filter; an empty list disables a biome), `enabled-worlds` (empty means every world). Target for an area = `base-target + per-additional-player * (extra players)`, capped at `max-target`. `deficit-cycles` and `cell-hourly-budget` are the anti-farm guardrails; top-ups spawn as one same-species group per cycle.
+- Everything: `.\gradlew.bat build`
+- Shared tests: `.\gradlew.bat :core:test`
+- Paper tests and jar: `.\gradlew.bat :paper:test :paper:jar`
+- Fabric server jar: `.\gradlew.bat :fabric:build`
+- Fabric HUD jar: `.\gradlew.bat :fabric-hud:build`
+- Paper development server: `.\gradlew.bat :paper:runServer`
+- Fabric development server: `.\gradlew.bat :fabric:runServer`
+- Fabric client with the HUD: `.\gradlew.bat :fabric-hud:runClient`
 
-Monitoring knobs (counters are always collected; these only control exposure): `log-spawns` (false, one console line per top-up), `spawn-log-file` (false, JSONL audit at plugins/WildAnimalBalancer/spawn-log.jsonl), `status-log-cycles` (0 = off, one-line summary every N cycles), `metrics.enabled`/`metrics.bind`/`metrics.port` (false/127.0.0.1/9940, built-in Prometheus endpoint). `/wildlife status` prints the counters at any time. See README "Monitoring" for the exported series.
+Distributable jars land in:
 
-## CI (.github/workflows)
-- build.yml: gradle build + jar artifact on push to main and on PRs.
-- integration.yml: boots real Paper and Folia 1.21.11 servers (boot-smoke), asserts "WildAnimalBalancer running." with no enable or Folia errors; plus a Folia E2E driven by a Mineflayer bot (pinned to 1.21.4 because Mineflayer's protocol caps there; plugin behaviour is identical across 1.21.x).
-- release.yml: pushing a `v*` tag builds and publishes to GitHub Release + Modrinth via mc-publish. `modrinth-id` is still the placeholder `YOUR_MODRINTH_PROJECT_ID`; set it before a real release.
+- `paper/build/libs/WildAnimalBalancer-paper-2.0.0.jar`
+- `fabric/build/libs/WildAnimalBalancer-fabric-2.0.0.jar`
+- `fabric-hud/build/libs/WildAnimalBalancer-fabric-hud-2.0.0.jar`
+
+After regenerating the wrapper, run `git update-index --chmod=+x gradlew` or Linux CI will fail.
+
+## Module map
+
+- `core`: `Settings`, YAML parsing and validation, target math, deficit and budget decisions, biome pool selection, the wild-animal predicate, stats, JSONL logging, and the Prometheus server. It has no Bukkit, Paper, Fabric, or Minecraft classes.
+- `paper`: `WildlifePlugin` and `WildAnimalBalancer`. Adapts core settings and decisions to Bukkit registries, Folia schedulers, world access, commands, and entity spawning.
+- `fabric`: `WildlifeMod`, `WildlifeRuntime`, `FabricBalancer`, commands, and the versioned HUD payload. Adapts the same core behavior to Minecraft 26.2 registries and the Fabric lifecycle.
+- `fabric-hud`: client receiver, key binding, and compact top-right admin overlay. It depends on the main Fabric mod for the payload contract.
+- `core/src/main/resources/vanilla-biome-animals.yml`: bundled vanilla spawn snapshot shared by both server platforms.
+
+Shared behavior belongs in `core`. Platform modules should contain only lifecycle, registry, scheduler, command, networking, world, and rendering adapters.
+
+## Paper and Folia threading rules
+
+- A lightweight async task walks the online player list each cycle and hands each player to their owning region through `Entity#getScheduler()`.
+- Everything that reads world state, reads entities, checks blocks, or spawns runs on the player's owning region thread.
+- Folia requires ownership of every chunk touched by an entity query. The census checks the whole scan box with `Bukkit.isOwnedByCurrentRegion(location, chunkRadius)` and skips boundary-crossing scans. Do not replace this with exception handling.
+- Spawn candidate chunks are checked again before block reads.
+- Coarse per-world cell claims happen only after the ownership pre-check, so a skipped player never claims the cell or resets its streak.
+- Paper routes the same scheduler calls to its main thread.
+
+## Fabric threading rules
+
+- Fabric world and entity work runs only from the server tick thread.
+- At the start of a cycle, the balancer queues online player IDs. It spreads those censuses over the cycle instead of doing every player in one tick.
+- The coarse cell claim, census, target decision, block checks, and spawn all happen synchronously on that server thread.
+- Fabric has no Folia region boundary skip. The shared `skipped_region_boundary` metric remains present and stays zero.
+- Config file parsing may run off-thread, but applying a new runtime happens on the server thread. Lifecycle callbacks and command registrations are installed once and must never be duplicated by reload.
+- The HUD payload is sent only when the client can receive it and the player has `wildlife.hud` permission.
+
+## Configuration
+
+Paper writes `plugins/WildAnimalBalancer/config.yml`. Fabric writes `config/wildanimalbalancer/config.yml`. First-run files are copied from the matching bundled resource without rewriting comments or ordering.
+
+Both platforms use the same keys and defaults: `cycle-seconds` (30), `scan-radius` (96), `base-target` (8), `per-additional-player` (4), `max-target` (40), `max-per-cycle` (6), `deficit-cycles` (3), `cell-hourly-budget` (30), `persistent-spawns` (true), `min-spawn-distance` (24), `spawn-tries` (20), `min-sky-light` (7), `animals`, `vanilla-biome-defaults`, `biome-animals`, `enabled-worlds`, logging settings, and metrics settings.
+
+- Entity values use canonical IDs such as `minecraft:cow`. Legacy values such as `COW` remain accepted and normalize to the canonical form.
+- `enabled-worlds` uses Bukkit world names on Paper, such as `world`.
+- `enabled-worlds` uses dimension IDs on Fabric, such as `minecraft:overworld`.
+- `biome-animals` keys use biome key paths such as `snowy_plains` on both platforms.
+- The bundled biome table is a filter only. It never adds a species the admin did not configure. An explicit empty biome list disables that biome.
+- `/wildlife reload` applies changes without resetting lifetime counters.
+
+Monitoring counters are always collected. `/wildlife status`, `log-spawns`, `spawn-log-file`, `status-log-cycles`, and the built-in Prometheus endpoint control exposure. The metrics supplier may read counters and map sizes only, never world state.
+
+## Permissions and HUD
+
+- `wildlife.admin`: use `/wildlife reload` and `/wildlife status`. Paper defaults it to op. Fabric uses Fabric Permissions API with game-master level fallback.
+- `wildlife.hud`: receive HUD samples. Fabric uses game-master level fallback.
+- The optional HUD toggles with `H`, renders wild count versus target, deficit streak, and remaining hourly budget, then fades when samples become stale.
+
+## Tests
+
+Core tests cover config compatibility and validation, target math, deficit outcomes, budgeting, biome pools, the exhaustive wild decision table, stats, metrics formatting, and JSONL output. Paper tests cover the Bukkit adapter and Folia scan ownership radius. Keep platform-neutral regressions in `core` whenever possible.
+
+Integration CI boots Paper and Folia 1.21.11, retains the Folia Mineflayer spawn check on 1.21.4, and boots a real Fabric 26.2 server with a Prometheus scrape assertion.
+
+The release workflow always creates a GitHub release. It publishes to Modrinth only when the repository variable `MODRINTH_PROJECT_ID` is configured; that path also requires the `MODRINTH_TOKEN` secret.
 
 ## House rules
-- No em dashes anywhere (code, comments, docs). Use commas, periods, parentheses, or a semicolon.
-- Conventional commits: feat:, fix:, docs:, chore:, refactor:.
-- main is protected. Land changes via PR; do not push to main directly or force-push.
-- Do not commit secrets and do not bypass pre-commit hooks.
-- "Wild" is a heuristic: anything not tamed, leashed, or name-tagged. There is a marked spot in the code for a claims-plugin check if strict separation is ever needed.
 
-## AI Attribution
-
-No AI attribution of any kind in commits, PRs, code, comments, or generated files. No "Co-authored-by", no "Generated with", no model names.
+- No em dashes anywhere in code, comments, docs, or generated files.
+- Conventional commits: `feat:`, `fix:`, `docs:`, `chore:`, or `refactor:`.
+- `main` is protected. Land changes through a pull request. Never push directly to `main` or force-push.
+- Do not commit secrets or bypass hooks.
+- No AI attribution in commits, pull requests, code, comments, or generated files. Do not add model names, `Co-authored-by`, or generated-by notices.
+- Wild is intentionally heuristic: an animal is wild when it is not tamed, leashed, or name-tagged. A claims integration would be a separate platform adapter concern.

@@ -15,12 +15,15 @@ For each meaningful area of the code, tell me:
 4. Severity (P0/P1/P2) and the smallest correct fix.
 
 Check these invariants explicitly:
-- All counting and spawning runs on the region that owns the location, through each player EntityScheduler. No main-thread assumptions.
-- Entities that sit across a region boundary are skipped, not forced. The log must never show "accessing entity state off owning region".
+- Platform-neutral config, math, decisions, monitoring, and logging stay in `core`, which has no server API types.
+- On Paper/Folia, all counting and spawning runs on the owning region through each player's EntityScheduler. A scan box that crosses a region boundary is skipped before the entity query.
+- On Fabric, all world and entity access stays on the server tick thread, and queued player work is spread across each cycle.
+- `/wildlife reload` preserves lifetime counters and does not duplicate Fabric lifecycle, command, or tick callbacks.
 - The wild predicate excludes tamed, leashed, and name-tagged animals.
 - The per-area target matches the config formula: base-target + per-additional-player * (extra players), capped at max-target.
 - Per-cycle spawning is throttled by max-per-cycle; spawns respect min-spawn-distance, min-sky-light, and grassland-only placement.
-- enabled-worlds is honored (empty means every world).
+- enabled-worlds is honored (empty means every world), using world names on Paper and dimension IDs on Fabric.
+- The optional HUD is client-only, permission-gated, and uses a versioned payload that fades when samples become stale.
 
 Rules:
 - Where code and docs disagree, say which one you would change and why.
