@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "id": "wildanimalbalancer",
+  "version": "${version}",
+  "name": "WildAnimalBalancer",
+  "description": "Demand-scaled wild passive animal top-ups near active players.",
+  "authors": [
+    "Ronald Johnson"
+  ],
+  "environment": "*",
+  "entrypoints": {
+    "main": [
+      "com.ouroboros.wildlife.fabric.WildlifeMod"
+    ]
+  },
+  "depends": {
+    "fabricloader": ">=0.19.3",
+    "minecraft": "~26.2",
+    "java": ">=25",
+    "fabric-api": ">=0.154.2"
+  }
+}

@@ -1,6 +1,10 @@
 # Gradle
 .gradle/
 build/
+/run/
+/paper/run/
+/fabric/run/
+/fabric-hud/run/
 
 # IDE
 .idea/
