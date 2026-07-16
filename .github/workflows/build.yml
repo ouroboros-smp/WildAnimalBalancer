@@ -8,6 +8,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: build-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -19,13 +23,58 @@ jobs:
           java-version: '25'
       - uses: gradle/actions/setup-gradle@v6
       - name: Build
-        run: ./gradlew build
+        run: ./gradlew build coverageReport --no-daemon
+      - name: Summarize coverage
+        if: always()
+        run: |
+          python3 - <<'PY' >> "$GITHUB_STEP_SUMMARY"
+          from pathlib import Path
+          import xml.etree.ElementTree as ET
+
+          print("## Unit-test coverage")
+          print("| Module | Lines | Branches |")
+          print("| --- | ---: | ---: |")
+          for module in ("core", "paper", "fabric", "fabric-hud"):
+              report = Path(module) / "build/reports/jacoco/test/jacocoTestReport.xml"
+              if not report.exists():
+                  print(f"| {module} | No tests | No tests |")
+                  continue
+              counters = {
+                  counter.attrib["type"]: counter.attrib
+                  for counter in ET.parse(report).getroot().findall("counter")
+              }
+              def ratio(counter_type):
+                  counter = counters[counter_type]
+                  total = int(counter["covered"]) + int(counter["missed"])
+                  return f"{int(counter['covered']) / total:.1%}" if total else "N/A"
+              print(f"| {module} | {ratio('LINE')} | {ratio('BRANCH')} |")
+          PY
+      - name: Upload coverage reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-reports
+          path: |
+            core/build/reports/jacoco/test/
+            paper/build/reports/jacoco/test/
+            fabric/build/reports/jacoco/test/
+            fabric-hud/build/reports/jacoco/test/
+          if-no-files-found: warn
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          path: |
+            **/build/test-results/test/*.xml
+            fabric/build/run/gameTest/logs/
+          if-no-files-found: warn
       - name: Upload distributable jars
         uses: actions/upload-artifact@v4
         with:
           name: WildAnimalBalancer
           path: |
-            paper/build/libs/WildAnimalBalancer-paper-2.0.0.jar
-            fabric/build/libs/WildAnimalBalancer-fabric-2.0.0.jar
-            fabric-hud/build/libs/WildAnimalBalancer-fabric-hud-2.0.0.jar
+            paper/build/libs/WildAnimalBalancer-paper-2.0.1.jar
+            fabric/build/libs/WildAnimalBalancer-fabric-2.0.1.jar
+            fabric-hud/build/libs/WildAnimalBalancer-fabric-hud-2.0.1.jar
           if-no-files-found: error

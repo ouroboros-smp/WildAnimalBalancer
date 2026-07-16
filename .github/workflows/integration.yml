@@ -1,11 +1,17 @@
 name: Integration
 
 on:
+  push:
+    branches: [ main ]
   pull_request:
   workflow_dispatch:
 
 permissions:
   contents: read
+
+concurrency:
+  group: integration-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   server-smoke:
@@ -31,15 +37,16 @@ jobs:
           PROJECT="${{ matrix.platform }}"
           # The legacy api.papermc.io/v2 endpoint was retired (410); fill.papermc.io/v3 replaces it.
           UA="WildAnimalBalancer-CI (github.com/ouroboros-smp/WildAnimalBalancer)"
-          URL=$(curl -fsSL -A "$UA" "https://fill.papermc.io/v3/projects/$PROJECT/versions/$MCV/builds/latest" | jq -er '.downloads["server:default"].url')
-          curl -fsSL -A "$UA" -o server.jar "$URL"
+          BUILDS=$(curl -fsSL --retry 5 --retry-all-errors --retry-delay 2 -A "$UA" "https://fill.papermc.io/v3/projects/$PROJECT/versions/$MCV/builds")
+          URL=$(jq -er 'first(.[] | select(.channel == "STABLE") | .downloads["server:default"].url)' <<< "$BUILDS")
+          curl -fsSL --retry 5 --retry-all-errors --retry-delay 2 -A "$UA" -o server.jar "$URL"
           echo "$PROJECT $MCV -> $URL"
       - name: Prepare server
         run: |
           set -eu
           echo "eula=true" > eula.txt
           mkdir -p plugins
-          cp paper/build/libs/WildAnimalBalancer-paper-2.0.0.jar plugins/
+          cp paper/build/libs/WildAnimalBalancer-paper-2.0.1.jar plugins/
       - name: Boot server, then stop
         run: |
           set -u
@@ -63,6 +70,13 @@ jobs:
             echo "::error::Plugin error detected on ${{ matrix.platform }}"; exit 1
           fi
           echo "OK: enabled cleanly on ${{ matrix.platform }}"
+      - name: Upload server log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: server-log-${{ matrix.platform }}
+          path: server.log
+          if-no-files-found: warn
 
   e2e:
     name: E2E spawn check (folia)
@@ -90,8 +104,10 @@ jobs:
           PROJECT=folia
           # The legacy api.papermc.io/v2 endpoint was retired (410); fill.papermc.io/v3 replaces it.
           UA="WildAnimalBalancer-CI (github.com/ouroboros-smp/WildAnimalBalancer)"
-          URL=$(curl -fsSL -A "$UA" "https://fill.papermc.io/v3/projects/$PROJECT/versions/$MCV/builds/latest" | jq -er '.downloads["server:default"].url')
-          curl -fsSL -A "$UA" -o server.jar "$URL"
+          BUILDS=$(curl -fsSL --retry 5 --retry-all-errors --retry-delay 2 -A "$UA" "https://fill.papermc.io/v3/projects/$PROJECT/versions/$MCV/builds")
+          # Folia 1.21.4 predates stable-channel publishing. Select its newest available build.
+          URL=$(jq -er 'first(.[] | .downloads["server:default"].url)' <<< "$BUILDS")
+          curl -fsSL --retry 5 --retry-all-errors --retry-delay 2 -A "$UA" -o server.jar "$URL"
           echo "$PROJECT $MCV -> $URL"
       - name: Configure server
         run: |
@@ -99,7 +115,7 @@ jobs:
           echo "eula=true" > eula.txt
           cp .github/e2e/server.properties server.properties
           mkdir -p plugins/WildAnimalBalancer
-          cp paper/build/libs/WildAnimalBalancer-paper-2.0.0.jar plugins/
+          cp paper/build/libs/WildAnimalBalancer-paper-2.0.1.jar plugins/
           cp .github/e2e/config.yml plugins/WildAnimalBalancer/config.yml
       - name: Boot Folia
         run: |
@@ -123,10 +139,17 @@ jobs:
       - name: Stop server and show log
         if: always()
         run: |
-          kill "$(cat server.pid)" 2>/dev/null || true
+          if [[ -f server.pid ]]; then kill "$(cat server.pid)" 2>/dev/null || true; fi
           sleep 3
           echo "===== server.log (tail) ====="
-          tail -n 120 server.log
+          if [[ -f server.log ]]; then tail -n 120 server.log; fi
+      - name: Upload server log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: server-log-folia-e2e
+          path: server.log
+          if-no-files-found: warn
 
   fabric-smoke:
     name: Fabric 26.2 boot and metrics smoke
@@ -146,7 +169,7 @@ jobs:
           curl -fsSL -o server.jar "https://meta.fabricmc.net/v2/versions/loader/26.2/0.19.3/1.1.1/server/jar"
           echo "eula=true" > eula.txt
           mkdir -p mods config/wildanimalbalancer
-          cp fabric/build/libs/WildAnimalBalancer-fabric-2.0.0.jar mods/
+          cp fabric/build/libs/WildAnimalBalancer-fabric-2.0.1.jar mods/
           curl -fsSL -o mods/fabric-api.jar "https://maven.fabricmc.net/net/fabricmc/fabric-api/fabric-api/0.154.2+26.2/fabric-api-0.154.2+26.2.jar"
           cp fabric/src/main/resources/config.yml config/wildanimalbalancer/config.yml
           sed -i '0,/enabled: false/s//enabled: true/' config/wildanimalbalancer/config.yml
@@ -183,10 +206,19 @@ jobs:
       - name: Stop server and show log
         if: always()
         run: |
-          kill "$(cat server.pid)" 2>/dev/null || true
-          wait "$(cat server.pid)" 2>/dev/null || true
+          if [[ -f server.pid ]]; then
+            kill "$(cat server.pid)" 2>/dev/null || true
+            wait "$(cat server.pid)" 2>/dev/null || true
+          fi
           echo "===== server.log (tail) ====="
-          tail -n 120 server.log
+          if [[ -f server.log ]]; then tail -n 120 server.log; fi
           if grep -nE "Could not execute entrypoint|Exception in server tick loop|Failed to start the minecraft server" server.log; then
             echo "::error::Fabric mod error detected"; exit 1
           fi
+      - name: Upload server log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: server-log-fabric
+          path: server.log
+          if-no-files-found: warn

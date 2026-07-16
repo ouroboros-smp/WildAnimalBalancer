@@ -22,9 +22,6 @@ import net.minecraft.world.entity.Mob;
 import net.minecraft.world.entity.TamableAnimal;
 import net.minecraft.world.entity.animal.Animal;
 import net.minecraft.world.entity.animal.equine.AbstractHorse;
-import net.minecraft.world.level.LightLayer;
-import net.minecraft.world.level.block.Blocks;
-import net.minecraft.world.level.levelgen.Heightmap;
 import net.minecraft.world.phys.AABB;
 
 import java.util.ArrayDeque;
@@ -153,8 +150,7 @@ final class FabricBalancer {
 
         int wild = 0;
         int localPlayers = 1;
-        int radius = settings.scanRadius();
-        AABB box = AABB.ofSize(player.position(), radius * 2.0, radius * 2.0, radius * 2.0);
+        AABB box = FabricCensusVolume.around(level, player.position(), settings.scanRadius());
         for (Entity entity : level.getEntities(
                 player, box, entity -> entity instanceof ServerPlayer || isWildAnimal(entity))) {
             if (entity instanceof ServerPlayer) localPlayers++;
@@ -301,15 +297,7 @@ final class FabricBalancer {
     }
 
     private BlockPos validSurfaceSpot(ServerLevel level, int x, int z) {
-        if (!level.hasChunk(x >> 4, z >> 4)) return null;
-        int topY = level.getHeight(Heightmap.Types.MOTION_BLOCKING, x, z);
-        BlockPos ground = new BlockPos(x, topY - 1, z);
-        BlockPos spawn = ground.above();
-        if (!level.getBlockState(ground).is(Blocks.GRASS_BLOCK)) return null;
-        if (!level.getBlockState(spawn).isAir()
-                || !level.getBlockState(spawn.above()).isAir()) return null;
-        if (level.getBrightness(LightLayer.SKY, spawn) < settings.minSkyLight()) return null;
-        return spawn;
+        return FabricSpawnSurface.validSpot(level, settings.minSkyLight(), x, z);
     }
 
     private static boolean isWildAnimal(Entity entity) {
