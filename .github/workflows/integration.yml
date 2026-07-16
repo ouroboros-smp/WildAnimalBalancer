@@ -37,8 +37,8 @@ jobs:
           PROJECT="${{ matrix.platform }}"
           # The legacy api.papermc.io/v2 endpoint was retired (410); fill.papermc.io/v3 replaces it.
           UA="WildAnimalBalancer-CI (github.com/ouroboros-smp/WildAnimalBalancer)"
-          URL=$(curl -fsSL -A "$UA" "https://fill.papermc.io/v3/projects/$PROJECT/versions/$MCV/builds/latest" | jq -er '.downloads["server:default"].url')
-          curl -fsSL -A "$UA" -o server.jar "$URL"
+          URL=$(curl -fsSL --retry 5 --retry-all-errors --retry-delay 2 -A "$UA" "https://fill.papermc.io/v3/projects/$PROJECT/versions/$MCV/builds/latest" | jq -er '.downloads["server:default"].url')
+          curl -fsSL --retry 5 --retry-all-errors --retry-delay 2 -A "$UA" -o server.jar "$URL"
           echo "$PROJECT $MCV -> $URL"
       - name: Prepare server
         run: |
@@ -103,8 +103,8 @@ jobs:
           PROJECT=folia
           # The legacy api.papermc.io/v2 endpoint was retired (410); fill.papermc.io/v3 replaces it.
           UA="WildAnimalBalancer-CI (github.com/ouroboros-smp/WildAnimalBalancer)"
-          URL=$(curl -fsSL -A "$UA" "https://fill.papermc.io/v3/projects/$PROJECT/versions/$MCV/builds/latest" | jq -er '.downloads["server:default"].url')
-          curl -fsSL -A "$UA" -o server.jar "$URL"
+          URL=$(curl -fsSL --retry 5 --retry-all-errors --retry-delay 2 -A "$UA" "https://fill.papermc.io/v3/projects/$PROJECT/versions/$MCV/builds/latest" | jq -er '.downloads["server:default"].url')
+          curl -fsSL --retry 5 --retry-all-errors --retry-delay 2 -A "$UA" -o server.jar "$URL"
           echo "$PROJECT $MCV -> $URL"
       - name: Configure server
         run: |
@@ -136,10 +136,10 @@ jobs:
       - name: Stop server and show log
         if: always()
         run: |
-          kill "$(cat server.pid)" 2>/dev/null || true
+          if [[ -f server.pid ]]; then kill "$(cat server.pid)" 2>/dev/null || true; fi
           sleep 3
           echo "===== server.log (tail) ====="
-          tail -n 120 server.log
+          if [[ -f server.log ]]; then tail -n 120 server.log; fi
       - name: Upload server log
         if: always()
         uses: actions/upload-artifact@v4
@@ -203,10 +203,12 @@ jobs:
       - name: Stop server and show log
         if: always()
         run: |
-          kill "$(cat server.pid)" 2>/dev/null || true
-          wait "$(cat server.pid)" 2>/dev/null || true
+          if [[ -f server.pid ]]; then
+            kill "$(cat server.pid)" 2>/dev/null || true
+            wait "$(cat server.pid)" 2>/dev/null || true
+          fi
           echo "===== server.log (tail) ====="
-          tail -n 120 server.log
+          if [[ -f server.log ]]; then tail -n 120 server.log; fi
           if grep -nE "Could not execute entrypoint|Exception in server tick loop|Failed to start the minecraft server" server.log; then
             echo "::error::Fabric mod error detected"; exit 1
           fi
