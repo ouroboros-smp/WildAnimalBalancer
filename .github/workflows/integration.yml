@@ -1,11 +1,17 @@
 name: Integration
 
 on:
+  push:
+    branches: [ main ]
   pull_request:
   workflow_dispatch:
 
 permissions:
   contents: read
+
+concurrency:
+  group: integration-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   server-smoke:
@@ -63,6 +69,13 @@ jobs:
             echo "::error::Plugin error detected on ${{ matrix.platform }}"; exit 1
           fi
           echo "OK: enabled cleanly on ${{ matrix.platform }}"
+      - name: Upload server log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: server-log-${{ matrix.platform }}
+          path: server.log
+          if-no-files-found: warn
 
   e2e:
     name: E2E spawn check (folia)
@@ -127,6 +140,13 @@ jobs:
           sleep 3
           echo "===== server.log (tail) ====="
           tail -n 120 server.log
+      - name: Upload server log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: server-log-folia-e2e
+          path: server.log
+          if-no-files-found: warn
 
   fabric-smoke:
     name: Fabric 26.2 boot and metrics smoke
@@ -190,3 +210,10 @@ jobs:
           if grep -nE "Could not execute entrypoint|Exception in server tick loop|Failed to start the minecraft server" server.log; then
             echo "::error::Fabric mod error detected"; exit 1
           fi
+      - name: Upload server log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: server-log-fabric
+          path: server.log
+          if-no-files-found: warn

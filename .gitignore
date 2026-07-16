@@ -4,6 +4,7 @@ build/
 /run/
 /paper/run/
 /fabric/run/
+/fabric/logs/
 /fabric-hud/run/
 
 # IDE
