@@ -74,7 +74,8 @@ jobs:
         with:
           name: WildAnimalBalancer
           path: |
-            paper/build/libs/WildAnimalBalancer-paper-2.0.1.jar
-            fabric/build/libs/WildAnimalBalancer-fabric-2.0.1.jar
-            fabric-hud/build/libs/WildAnimalBalancer-fabric-hud-2.0.1.jar
+            paper/build/libs/WildAnimalBalancer-paper-*.jar
+            fabric/build/libs/WildAnimalBalancer-fabric-*.jar
+            fabric-hud/build/libs/WildAnimalBalancer-fabric-hud-*.jar
+            !**/*-sources.jar
           if-no-files-found: error
