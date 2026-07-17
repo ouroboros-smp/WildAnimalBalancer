@@ -9,7 +9,7 @@ plugins {
 
 allprojects {
     group = "com.ouroboros"
-    version = "2.0.1"
+    version = "2.0.2"
 }
 
 val coverageReport = tasks.register("coverageReport") {
