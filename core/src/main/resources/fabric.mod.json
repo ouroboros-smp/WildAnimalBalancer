@@ -1,0 +1,13 @@
+{
+  "schemaVersion": 1,
+  "id": "wildanimalbalancer-core",
+  "version": "${version}",
+  "name": "WildAnimalBalancer Core",
+  "description": "Platform-neutral spawn balancing domain logic.",
+  "license": "MIT",
+  "environment": "*",
+  "depends": {
+    "fabricloader": ">=0.19.3",
+    "java": ">=21"
+  }
+}
