@@ -46,7 +46,7 @@ jobs:
           set -eu
           echo "eula=true" > eula.txt
           mkdir -p plugins
-          cp paper/build/libs/WildAnimalBalancer-paper-2.0.1.jar plugins/
+          cp $(ls paper/build/libs/WildAnimalBalancer-paper-*.jar | grep -v sources) plugins/
       - name: Boot server, then stop
         run: |
           set -u
@@ -115,7 +115,7 @@ jobs:
           echo "eula=true" > eula.txt
           cp .github/e2e/server.properties server.properties
           mkdir -p plugins/WildAnimalBalancer
-          cp paper/build/libs/WildAnimalBalancer-paper-2.0.1.jar plugins/
+          cp $(ls paper/build/libs/WildAnimalBalancer-paper-*.jar | grep -v sources) plugins/
           cp .github/e2e/config.yml plugins/WildAnimalBalancer/config.yml
       - name: Boot Folia
         run: |
@@ -169,7 +169,7 @@ jobs:
           curl -fsSL -o server.jar "https://meta.fabricmc.net/v2/versions/loader/26.2/0.19.3/1.1.1/server/jar"
           echo "eula=true" > eula.txt
           mkdir -p mods config/wildanimalbalancer
-          cp fabric/build/libs/WildAnimalBalancer-fabric-2.0.1.jar mods/
+          cp $(ls fabric/build/libs/WildAnimalBalancer-fabric-*.jar | grep -v sources) mods/
           curl -fsSL -o mods/fabric-api.jar "https://maven.fabricmc.net/net/fabricmc/fabric-api/fabric-api/0.154.2+26.2/fabric-api-0.154.2+26.2.jar"
           cp fabric/src/main/resources/config.yml config/wildanimalbalancer/config.yml
           sed -i '0,/enabled: false/s//enabled: true/' config/wildanimalbalancer/config.yml
