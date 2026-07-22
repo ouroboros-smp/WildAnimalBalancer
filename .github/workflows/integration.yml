@@ -16,7 +16,7 @@ concurrency:
 jobs:
   server-smoke:
     name: Boot smoke (${{ matrix.platform }})
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, crucible-pc]
     strategy:
       fail-fast: false
       matrix:
@@ -80,7 +80,7 @@ jobs:
 
   e2e:
     name: E2E spawn check (folia)
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, crucible-pc]
     # The released Mineflayer package pins protocol deps that cap at 1.21.4, so the E2E
     # server runs there. The plugin's behaviour is identical across 1.21.x, and the real
     # 1.21.11 runtime (the version we play on) is covered by the boot-smoke jobs above.
@@ -153,7 +153,7 @@ jobs:
 
   fabric-smoke:
     name: Fabric 26.2 boot and metrics smoke
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, crucible-pc]
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-java@v5
